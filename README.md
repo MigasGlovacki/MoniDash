@@ -3,11 +3,10 @@
 MoniDash is a local-first Geometry Dash telemetry mod intended to complement,
 not replace, the existing Death Tracker mod.
 
-**Status:** The real mod runtime now recovers abandoned local sessions, starts one
-new session on load, and contains a player-lifecycle death candidate using only a
-verified level identifier. The `PlayerObject::playerDestroyed` candidate has not
-been runtime validated. It must not yet be treated as a solution to duplicate
-death callbacks. Windows/Geode packaging and session runtime have been validated.
+**Status:** The real Windows mod runtime has validated one `level_started` event
+and exactly one `playerDestroyed` death event for one real death. Exit
+finalization and the Death Tracker snapshot remain unvalidated. The death
+candidate must not yet be treated as a solution to duplicate death callbacks.
 
 ## Why two data sources?
 
@@ -71,9 +70,9 @@ cmake -S . -B build/geode \
 cmake --build build/geode --config Release
 ```
 
-The Windows package and session bootstrap have been validated on the target PC.
-The level-start and player-lifecycle death observation adapters still require
-target runtime validation.
+Windows packaging, one level-start event, and one player-lifecycle death event
+have been validated on the target. Exit finalization and the Death Tracker
+snapshot still require Windows runtime validation.
 
 ## Future distribution
 
@@ -87,6 +86,8 @@ versioned release rather than rewriting an existing release.
 
 ## Project scope
 
-The current runtime observes level starts locally and includes an unvalidated
-player-lifecycle death candidate. Death Tracker reading, networking, a relay, a
-hub, and generated user telemetry are not part of this slice.
+The current runtime observes level starts locally, includes a player-lifecycle
+death candidate, and is intended to take a read-only exit snapshot of selected
+Death Tracker files. Exit finalization and snapshot runtime remain unvalidated.
+Networking, a relay, a hub, and generated user telemetry are not part of this
+slice.
