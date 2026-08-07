@@ -202,6 +202,9 @@ std::vector<RecoveryResult> SessionStore::scan(const std::filesystem::path& root
       if (!in.eof()) {
         throw std::invalid_argument("invalid event log");
       }
+      if (!saw_started) {
+        throw std::invalid_argument("missing session start");
+      }
       result.push_back({dir, RecoveryStatus::Active});
     } catch (...) {
       result.push_back({dir, RecoveryStatus::Corrupt});

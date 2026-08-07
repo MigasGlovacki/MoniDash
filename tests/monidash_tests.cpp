@@ -60,7 +60,7 @@ void storage_tests() {
   const auto content = read(root / "one" / "events.jsonl"); check(content.find("\"event_id\":7") != std::string::npos, "event id not preserved");
   store.append(event("one", std::numeric_limits<std::uint64_t>::max(), 3)); const auto before_max_finalize = read(root / "one" / "events.jsonl"); rejects([&] { store.finalize(4); }); check(read(root / "one" / "events.jsonl") == before_max_finalize, "max event id finalization changed event file");
   int failures = 0; auto fail_root = temp("retry"); SessionStore failing(fail_root, [&](const std::string& stage) { return stage == "manifest_rename" && failures++ == 0; }); failing.start("retry", 1); failing.append(event("retry", 1, 2)); rejects_any([&] { failing.finalize(3); }); failing.finalize(3); const auto log = read(fail_root / "retry" / "events.jsonl"); check(log.find("session_ended") != std::string::npos && log.find("session_ended", log.find("session_ended") + 1) == std::string::npos, "duplicate session end on retry");
-  auto recovery = temp("recovery"); std::filesystem::create_directories(recovery / "active"); write(recovery / "active" / "manifest.json", Manifest{1, "active", 1, std::nullopt, "active"}.serialize()); write(recovery / "active" / "events.jsonl", "");
+  auto recovery = temp("recovery"); std::filesystem::create_directories(recovery / "active"); write(recovery / "active" / "manifest.json", Manifest{1, "active", 1, std::nullopt, "active"}.serialize()); Event recovery_start; recovery_start.session_id = "active"; recovery_start.event_id = 1; recovery_start.sequence = 1; recovery_start.timestamp_ms = 1; recovery_start.kind = EventKind::SessionStarted; write(recovery / "active" / "events.jsonl", recovery_start.serialize() + "\n");
   std::filesystem::create_directories(recovery / "truncated"); write(recovery / "truncated" / "manifest.json", Manifest{1, "truncated", 1, std::nullopt, "active"}.serialize()); write(recovery / "truncated" / "events.jsonl", "{partial");
   std::filesystem::create_directories(recovery / "missing"); std::filesystem::create_directories(recovery / "badmanifest"); write(recovery / "badmanifest" / "manifest.json", "nope");
   const auto before = read(recovery / "truncated" / "events.jsonl"); auto found = SessionStore::scan(recovery); bool active = false, corrupt = false, missing = false; for (const auto& r : found) { active |= r.status == RecoveryStatus::Active; corrupt |= r.status == RecoveryStatus::Corrupt; missing |= r.status == RecoveryStatus::Missing; } check(active && corrupt && missing, "recovery statuses"); check(read(recovery / "truncated" / "events.jsonl") == before, "recovery altered events");
@@ -70,7 +70,11 @@ void recovery_tests() {
   auto root = temp("recovery-operation");
   std::filesystem::create_directories(root / "active");
   write(root / "active" / "manifest.json", Manifest{1, "active", 10, std::nullopt, "active"}.serialize());
-  write(root / "active" / "events.jsonl", "");
+  Event active_start; active_start.session_id = "active"; active_start.event_id = 1; active_start.sequence = 1; active_start.timestamp_ms = 10; active_start.kind = EventKind::SessionStarted;
+  write(root / "active" / "events.jsonl", active_start.serialize() + "\n");
+  std::filesystem::create_directories(root / "empty-active");
+  write(root / "empty-active" / "manifest.json", Manifest{1, "empty-active", 10, std::nullopt, "active"}.serialize());
+  write(root / "empty-active" / "events.jsonl", "");
   std::filesystem::create_directories(root / "complete");
   write(root / "complete" / "manifest.json", Manifest{1, "complete", 10, 20, "complete"}.serialize());
   write(root / "complete" / "events.jsonl", "complete bytes\n");
@@ -81,13 +85,21 @@ void recovery_tests() {
   write(root / "missing" / "manifest.json", Manifest{1, "missing", 10, std::nullopt, "active"}.serialize());
 
   const auto active_events = read(root / "active" / "events.jsonl");
+  const auto empty_manifest = read(root / "empty-active" / "manifest.json");
+  const auto empty_events = read(root / "empty-active" / "events.jsonl");
   const auto complete_manifest = read(root / "complete" / "manifest.json");
   const auto corrupt_manifest = read(root / "corrupt" / "manifest.json");
   const auto missing_manifest = read(root / "missing" / "manifest.json");
+  bool empty_active_corrupt = false;
+  for (const auto& result : SessionStore::scan(root)) {
+    if (result.path.filename() == "empty-active") empty_active_corrupt = result.status == RecoveryStatus::Corrupt;
+  }
+  check(empty_active_corrupt, "empty active event log was accepted");
   check(SessionStore::recover(root) == 1, "recovery did not change exactly one active session");
   const auto recovered = Manifest::parse(read(root / "active" / "manifest.json"));
   check(recovered.status == "interrupted" && !recovered.ended_at_ms, "active session was not interrupted without an end time");
   check(read(root / "active" / "events.jsonl") == active_events, "recovery altered active events");
+  check(read(root / "empty-active" / "manifest.json") == empty_manifest && read(root / "empty-active" / "events.jsonl") == empty_events, "recovery altered empty active session");
   check(read(root / "complete" / "manifest.json") == complete_manifest, "recovery altered complete session");
   check(read(root / "corrupt" / "manifest.json") == corrupt_manifest, "recovery altered corrupt session");
   check(read(root / "missing" / "manifest.json") == missing_manifest, "recovery altered incomplete session");
