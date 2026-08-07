@@ -12,6 +12,7 @@ class MoniDashCore {
   using IdGenerator = std::function<std::string()>;
   MoniDashCore(SessionStore& store, Clock clock, IdGenerator ids) : store_(store), clock_(std::move(clock)), ids_(std::move(ids)) {}
   void start();
+  void record_level_started(const std::string& level_id);
   void record_death(const Death& death);
   void shutdown();
   const std::string& session_id() const { return session_id_; }

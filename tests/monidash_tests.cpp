@@ -17,21 +17,21 @@ template<class F> void rejects_any(F f) { try { f(); throw std::runtime_error("e
 std::filesystem::path temp(const char* name) { auto p = std::filesystem::temp_directory_path() / (std::string("monidash-") + name); std::filesystem::remove_all(p); std::filesystem::create_directories(p); return p; }
 std::string read(const std::filesystem::path& p) { std::ifstream in(p); return {std::istreambuf_iterator<char>(in), {}}; }
 void write(const std::filesystem::path& p, const std::string& content) { std::ofstream out(p); check(static_cast<bool>(out), "fixture file open failed"); out << content; out.flush(); check(static_cast<bool>(out), "fixture file write failed"); }
-Event event(const std::string& session, std::uint64_t id, std::int64_t time) { Event e; e.session_id = session; e.event_id = id; e.timestamp_ms = time; e.kind = EventKind::LevelStarted; return e; }
+Event event(const std::string& session, std::uint64_t id, std::int64_t time) { Event e; e.session_id = session; e.event_id = id; e.timestamp_ms = time; e.kind = EventKind::LevelStarted; e.level_id = "level"; return e; }
 
 void schema_tests() {
-  Event e = event("s", 1, 10); e.sequence = 1; e.kind = EventKind::Death; DeathObservation d; d.level_id = "level"; d.raw_x = 0; d.mini = false; d.speed = 1.0; d.percentage_bin = 50; e.death = d;
-  auto exact_event_id = Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":9007199254740993,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}");
+  Event e = event("s", 1, 10); e.sequence = 1; e.kind = EventKind::Death; e.level_id.reset(); DeathObservation d; d.level_id = "level"; d.raw_x = 0; d.mini = false; d.speed = 1.0; d.percentage_bin = 50; e.death = d;
+  auto exact_event_id = Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":9007199254740993,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\",\"level_id\":\"level\"}");
   check(exact_event_id.event_id == 9007199254740993ULL, "event_id precision was lost");
-  const auto max_event = Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":18446744073709551615,\"sequence\":18446744073709551615,\"timestamp_ms\":9223372036854775807,\"kind\":\"level_started\"}");
+  const auto max_event = Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":18446744073709551615,\"sequence\":18446744073709551615,\"timestamp_ms\":9223372036854775807,\"kind\":\"level_started\",\"level_id\":\"level\"}");
   check(max_event.event_id == std::numeric_limits<std::uint64_t>::max() && max_event.sequence == std::numeric_limits<std::uint64_t>::max() && max_event.timestamp_ms == std::numeric_limits<std::int64_t>::max(), "integer boundary was not preserved");
   const auto max_manifest = Manifest::parse("{\"schema_version\":1,\"session_id\":\"s\",\"started_at_ms\":9223372036854775807,\"ended_at_ms\":9223372036854775807,\"status\":\"complete\"}");
   check(max_manifest.started_at_ms == std::numeric_limits<std::int64_t>::max() && max_manifest.ended_at_ms == std::numeric_limits<std::int64_t>::max(), "manifest timestamp boundary was not preserved");
-  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":18446744073709551616,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
-  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":9223372036854775808,\"kind\":\"level_started\"}"); });
-  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1e3,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
-  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1.0,\"kind\":\"level_started\"}"); });
-  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":-0,\"kind\":\"level_started\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":18446744073709551616,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\",\"level_id\":\"level\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":9223372036854775808,\"kind\":\"level_started\",\"level_id\":\"level\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1e3,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\",\"level_id\":\"level\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1.0,\"kind\":\"level_started\",\"level_id\":\"level\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":-0,\"kind\":\"level_started\",\"level_id\":\"level\"}"); });
   const auto floating = Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"death\",\"level_id\":\"level\",\"raw_x\":1.25,\"speed\":1e2}");
   check(floating.death->raw_x == 1.25 && floating.death->speed == 100.0, "floating telemetry notation was rejected");
   rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"death\",\"level_id\":\"level\",\"raw_x\":1e-9999}"); });
@@ -42,7 +42,7 @@ void schema_tests() {
   rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"death\",\"level_id\":\"level\",\"percentage_bin\":50}"); });
   e.death->attempt = 0; e.death->percentage_bin_convention = "verified-level-length-v1"; e.death->reverse_gravity = false; e.death->practice = false; e.death->dual = false; auto round = Event::parse(e.serialize()); check(round.death->attempt == 0 && round.death->raw_x == 0 && round.death->mini == false && round.death->reverse_gravity == false && round.death->practice == false && round.death->dual == false && round.death->speed == 1.0, "zero/false telemetry was not preserved"); check(round.death->percentage_bin == 50 && round.death->percentage_bin_convention == "verified-level-length-v1", "percentage convention lost");
   auto escaped = event("line\n\"\\\b\f\r\t\001", 1, 10); escaped.sequence = 1; escaped.kind = EventKind::LevelStarted; auto escaped_round = Event::parse(escaped.serialize()); check(escaped_round.session_id == escaped.session_id, "control characters did not round-trip");
-  auto unicode = Event::parse("{\"schema_version\":1,\"session_id\":\"\\u006c\\u00e9\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); check(unicode.session_id == "l\xc3\xa9", "unicode escape did not parse");
+  auto unicode = Event::parse("{\"schema_version\":1,\"session_id\":\"\\u006c\\u00e9\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\",\"level_id\":\"level\"}"); check(unicode.session_id == "l\xc3\xa9", "unicode escape did not parse");
   rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":+1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
   rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":01,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
   rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1.,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
@@ -95,7 +95,7 @@ void recovery_tests() {
 }
 
 void core_tests() {
-  auto root = temp("core"); SessionStore store(root); std::int64_t clock = 100; MoniDashCore core(store, [&] { return clock++; }, [] { return std::string("core-session"); }); core.start(); Death death; death.level_id = "level"; death.speed = 1.2; core.record_death(death); core.shutdown(); auto events = read(root / "core-session" / "events.jsonl"); check(events.find("session_ended") != std::string::npos && events.find("\"sequence\":4") == std::string::npos, "unexpected lifecycle ordering"); check(read(root / "core-session" / "manifest.json").find("complete") != std::string::npos, "core did not finalize");
+  auto root = temp("core"); SessionStore store(root); std::int64_t clock = 100; MoniDashCore core(store, [&] { return clock++; }, [] { return std::string("core-session"); }); core.start(); core.record_level_started("level-123"); rejects([&] { core.record_level_started(""); }); Death death; death.level_id = "level"; death.speed = 1.2; core.record_death(death); core.shutdown(); auto events = read(root / "core-session" / "events.jsonl"); check(events.find("level-123") != std::string::npos, "level start was not persisted"); check(events.find("session_ended") != std::string::npos && events.find("\"sequence\":4") != std::string::npos, "unexpected lifecycle ordering"); check(read(root / "core-session" / "manifest.json").find("complete") != std::string::npos, "core did not finalize");
 }
 }
 int main() { try { schema_tests(); storage_tests(); recovery_tests(); core_tests(); std::cout << "passed " << checks << " checks\n"; return 0; } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; } }

@@ -219,6 +219,7 @@ Event parse_event(const Json& j) {
   const auto& o = obj(j); Event e; e.schema_version = small_integer(req(o, "schema_version")); e.session_id = str(req(o, "session_id"));
   e.event_id = unsigned_integer(req(o, "event_id")); e.sequence = unsigned_integer(req(o, "sequence")); e.timestamp_ms = integer(req(o, "timestamp_ms"));
   const auto kind = str(req(o, "kind")); if (kind == "session_started") e.kind = EventKind::SessionStarted; else if (kind == "session_ended") e.kind = EventKind::SessionEnded; else if (kind == "level_started") e.kind = EventKind::LevelStarted; else if (kind == "death") e.kind = EventKind::Death; else throw std::invalid_argument("unknown event kind");
+  if (e.kind == EventKind::LevelStarted) e.level_id = str(req(o, "level_id"));
   if (e.kind == EventKind::Death) { DeathObservation d; d.level_id = str(req(o, "level_id"));
     auto get = [&](const char* key, auto& target, auto fn) { auto i = o.find(key); if (i != o.end()) target = fn(i->second); };
     get("attempt", d.attempt, small_integer); get("raw_x", d.raw_x, num); get("percentage_bin", d.percentage_bin, small_integer); get("percentage_bin_convention", d.percentage_bin_convention, str); get("gamemode", d.gamemode, str); get("mini", d.mini, boolean); get("reverse_gravity", d.reverse_gravity, boolean); get("speed", d.speed, num); get("practice", d.practice, boolean); get("dual", d.dual, boolean); get("recent_input", d.recent_input, str); e.death = d;
@@ -230,6 +231,11 @@ namespace monidash {
 void Event::validate() const {
   if (schema_version != kSchemaVersion || session_id.empty() || event_id == 0 || sequence == 0 || timestamp_ms < 0) {
     throw std::invalid_argument("invalid event");
+  }
+  if (kind == EventKind::LevelStarted) {
+    if (!level_id || level_id->empty()) throw std::invalid_argument("level_started requires level_id");
+  } else if (level_id) {
+    throw std::invalid_argument("non-level-start has level_id");
   }
   if (kind == EventKind::Death) {
     if (!death || death->level_id.empty()) throw std::invalid_argument("death requires level_id");
@@ -250,6 +256,7 @@ void Event::validate() const {
   }
 }
 std::string Event::serialize() const { validate(); std::ostringstream o; bool f = true; o << '{'; put(o, "schema_version", schema_version, f); put(o, "session_id", session_id, f); put(o, "event_id", event_id, f); put(o, "sequence", sequence, f); put(o, "timestamp_ms", timestamp_ms, f); const std::string k = kind == EventKind::SessionStarted ? "session_started" : kind == EventKind::SessionEnded ? "session_ended" : kind == EventKind::LevelStarted ? "level_started" : "death"; put(o, "kind", k, f);
+   if (level_id) put(o, "level_id", *level_id, f);
   if (death) { put(o, "level_id", death->level_id, f); if (death->attempt) put(o, "attempt", *death->attempt, f); if (death->raw_x) put(o, "raw_x", *death->raw_x, f); if (death->percentage_bin && death->percentage_bin_convention) { put(o, "percentage_bin", *death->percentage_bin, f); put(o, "percentage_bin_convention", *death->percentage_bin_convention, f); } if (death->gamemode) put(o, "gamemode", *death->gamemode, f); if (death->mini) put(o, "mini", *death->mini, f); if (death->reverse_gravity) put(o, "reverse_gravity", *death->reverse_gravity, f); if (death->speed) put(o, "speed", *death->speed, f); if (death->practice) put(o, "practice", *death->practice, f); if (death->dual) put(o, "dual", *death->dual, f); if (death->recent_input) put(o, "recent_input", *death->recent_input, f); } return o.str() + '}'; }
 Event Event::parse(const std::string& j) { return parse_event(Parser(j).parse()); }
 void Manifest::validate() const { if (schema_version != kSchemaVersion || session_id.empty() || started_at_ms < 0 || (status != "active" && status != "interrupted" && status != "complete")) throw std::invalid_argument("invalid manifest"); if ((status == "active" || status == "interrupted") && ended_at_ms) throw std::invalid_argument("active or interrupted manifest has end time"); if (status == "complete" && (!ended_at_ms || *ended_at_ms < started_at_ms)) throw std::invalid_argument("invalid complete manifest times"); if (ended_at_ms && *ended_at_ms < 0) throw std::invalid_argument("invalid manifest end time"); }

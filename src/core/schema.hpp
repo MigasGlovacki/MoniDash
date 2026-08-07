@@ -32,6 +32,7 @@ struct Event {
   std::uint64_t sequence{0};
   std::int64_t timestamp_ms{0};
   EventKind kind{EventKind::SessionStarted};
+  std::optional<std::string> level_id;
   std::optional<DeathObservation> death;
 
   std::string serialize() const;

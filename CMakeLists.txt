@@ -45,6 +45,10 @@ add_test(
     NAME monidash_geode_namespace_contract
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/geode_namespace_contract.cmake
 )
+add_test(
+    NAME monidash_geode_level_start_contract
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/geode_level_start_contract.cmake
+)
 
 option(MONIDASH_BUILD_GEODE_MOD "Build the Geode mod package" OFF)
 set(MONIDASH_GEODE_SDK "" CACHE PATH "Path to the Geode SDK source tree")
