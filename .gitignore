@@ -25,6 +25,8 @@ cmake_install.cmake
 compile_commands.json
 _deps/
 *.geode
+*.dll
+*.pdb
 
 # IDE and editor files
 .idea/

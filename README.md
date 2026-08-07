@@ -3,7 +3,14 @@
 MoniDash is a local-first Geometry Dash telemetry mod intended to complement,
 not replace, the existing Death Tracker mod.
 
-**Status:** Early design. MoniDash is not installable yet.
+**Status:** The narrow MoniDash MVP flow has been validated in the real Windows
+runtime. A normal Geometry Dash exit produced a complete manifest, one
+`session_ended` event, and the sequence `session_started` ->
+`level_started(level_id 1)` -> `death(level_id 1)` -> `session_ended`. It also
+produced `death_tracker_snapshot/1-local/{metadata,general.dt}`; SHA-256 copies
+exactly matched the current Death Tracker sources. This validates the observed
+single-player flow only, not all level types, duplicate or dual-player cases,
+death causes, richer telemetry, analysis, networking, or PR merge status.
 
 ## Why two data sources?
 
@@ -46,18 +53,48 @@ The initial project does not aim to provide:
 - Automatic diagnosis
 - A replacement for Death Tracker
 
-## Future distribution
+## Build
 
-When MoniDash becomes installable, the intended first distribution path is
-versioned GitHub Releases. A later option may be publication through the
-Geode Index for in-game installation and updates; the Geode Index is not set
-up for this project yet.
+Core-only mode works on Linux without the Geode SDK:
 
-Each release should be immutable. Changes should be published as a new
-versioned release rather than rewriting an existing release.
+```sh
+cmake -S . -B build/core
+cmake --build build/core
+ctest --test-dir build/core --output-on-failure
+```
+
+Windows Geode package mode requires the Geode SDK source and CLI paths to be
+provided explicitly. Replace both placeholders with paths on the build PC:
+
+```sh
+cmake -S . -B build/geode \
+  -DMONIDASH_BUILD_GEODE_MOD=ON \
+  -DMONIDASH_GEODE_SDK=<path-to-geode-sdk-5.8.2> \
+  -DGEODE_CLI=<path-to-geode-cli-3.8.0>
+cmake --build build/geode --config Release
+```
+
+The narrow Windows MVP flow has been runtime-validated: packaging, manifest
+completion on a normal exit, the session/event sequence described above, and
+the Death Tracker snapshot files are present and source-matched by SHA-256.
+This is not a claim of generality across all level types or duplicate/dual-player
+cases, and does not include causes, richer telemetry, analysis, networking, or
+PR merge status.
+
+## Distribution and updates
+
+MoniDash v1.0 will not be published to the Geode Index and will not offer
+automated GitHub-based updates. GitHub remains the project's source-control and
+review platform. During development and testing, builds, installs, and updates
+will be coordinated manually. This repository does not claim a public release.
 
 ## Project scope
 
-This repository currently contains documentation only. C++ code, CMake files,
-`mod.json`, CI, releases, networking, a relay, a hub, and telemetry collection
-are intentionally not part of this foundation.
+The current runtime has a narrow, Windows-validated MVP flow: a normal exit
+produces a complete manifest with one `session_ended` event, the sequence
+`session_started` -> `level_started(level_id 1)` -> `death(level_id 1)` ->
+`session_ended`, and a read-only snapshot at
+`death_tracker_snapshot/1-local/{metadata,general.dt}` whose SHA-256 copies
+match the current Death Tracker sources. This scope does not claim coverage of
+all level types, duplicate or dual-player cases, death causes, richer telemetry,
+analysis, networking, or PR merge status.
