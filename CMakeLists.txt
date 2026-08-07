@@ -51,7 +51,7 @@ if(MONIDASH_BUILD_GEODE_MOD)
 
     add_subdirectory("${MONIDASH_GEODE_SDK}" "${CMAKE_BINARY_DIR}/geode-sdk")
     add_library(monidash_geode_mod SHARED src/main.cpp)
-    target_link_libraries(monidash_geode_mod PRIVATE monidash_core)
+    target_link_libraries(monidash_geode_mod monidash_core)
     target_compile_features(monidash_geode_mod PRIVATE cxx_std_23)
     target_compile_options(monidash_geode_mod PRIVATE ${MONIDASH_WARNINGS})
     setup_geode_mod(monidash_geode_mod)
