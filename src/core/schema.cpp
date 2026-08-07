@@ -1,5 +1,6 @@
 #include "core/schema.hpp"
 
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
@@ -11,10 +12,14 @@
 #include <vector>
 
 namespace monidash { namespace {
+struct JsonNumber {
+  std::string token;
+};
+
 struct Json {
   using Object = std::map<std::string, Json>;
   using Array = std::vector<Json>;
-  std::variant<std::nullptr_t, bool, double, std::string, Array, Object> value;
+  std::variant<std::nullptr_t, bool, JsonNumber, std::string, Array, Object> value;
 };
 
 class Parser {
@@ -117,11 +122,7 @@ class Parser {
       while (p_ < s_.size() && s_[p_] >= '0' && s_[p_] <= '9') ++p_;
       if (p_ == exponent) bad();
     }
-    const std::string token = s_.substr(start, p_ - start);
-    char* end = nullptr;
-    const double value = std::strtod(token.c_str(), &end);
-    if (end != token.c_str() + token.size() || !std::isfinite(value)) bad();
-    return {value};
+    return {JsonNumber{s_.substr(start, p_ - start)}};
   }
   Json value() {
     ws(); if (p_ >= s_.size()) bad(); char c = s_[p_];
@@ -147,19 +148,41 @@ class Parser {
 const Json::Object& obj(const Json& j) { auto* p = std::get_if<Json::Object>(&j.value); if (!p) throw std::invalid_argument("JSON object expected"); return *p; }
 const Json& req(const Json::Object& o, const char* k) { auto i = o.find(k); if (i == o.end()) throw std::invalid_argument(std::string("missing field: ") + k); return i->second; }
 std::string str(const Json& j) { auto* p = std::get_if<std::string>(&j.value); if (!p) throw std::invalid_argument("string expected"); return *p; }
-double num(const Json& j) { auto* p = std::get_if<double>(&j.value); if (!p || !std::isfinite(*p)) throw std::invalid_argument("finite number expected"); return *p; }
+double num(const Json& j) {
+  const auto* p = std::get_if<JsonNumber>(&j.value);
+  if (!p) throw std::invalid_argument("finite number expected");
+  char* end = nullptr;
+  const double value = std::strtod(p->token.c_str(), &end);
+  if (end != p->token.c_str() + p->token.size() || !std::isfinite(value)) throw std::invalid_argument("finite number expected");
+  return value;
+}
+bool canonical_integer_token(const std::string& token) {
+  std::size_t first = token.front() == '-' ? 1 : 0;
+  if (first == token.size()) return false;
+  if (token[first] == '0' && token.size() - first > 1) return false;
+  for (std::size_t i = first; i < token.size(); ++i) {
+    if (token[i] < '0' || token[i] > '9') return false;
+  }
+  return true;
+}
 std::int64_t integer(const Json& j) {
-  const double n = num(j); const double max = static_cast<double>(std::numeric_limits<std::int64_t>::max());
-  if (n < static_cast<double>(std::numeric_limits<std::int64_t>::min()) || n > max || std::trunc(n) != n) throw std::invalid_argument("integer expected");
-  return static_cast<std::int64_t>(n);
+  const auto* p = std::get_if<JsonNumber>(&j.value);
+  if (!p || !canonical_integer_token(p->token)) throw std::invalid_argument("canonical integer expected");
+  std::int64_t value = 0;
+  const auto result = std::from_chars(p->token.data(), p->token.data() + p->token.size(), value);
+  if (result.ec != std::errc{} || result.ptr != p->token.data() + p->token.size()) throw std::invalid_argument("integer out of range");
+  return value;
 }
 int small_integer(const Json& j) {
   const auto n = integer(j); if (n < std::numeric_limits<int>::min() || n > std::numeric_limits<int>::max()) throw std::invalid_argument("small integer expected"); return static_cast<int>(n);
 }
 std::uint64_t unsigned_integer(const Json& j) {
-  const double n = num(j); constexpr long double limit = 18446744073709551616.0L;
-  if (n < 0 || static_cast<long double>(n) >= limit || std::trunc(n) != n) throw std::invalid_argument("nonnegative unsigned integer expected");
-  return static_cast<std::uint64_t>(n);
+  const auto* p = std::get_if<JsonNumber>(&j.value);
+  if (!p || !canonical_integer_token(p->token) || p->token.front() == '-') throw std::invalid_argument("canonical unsigned integer expected");
+  std::uint64_t value = 0;
+  const auto result = std::from_chars(p->token.data(), p->token.data() + p->token.size(), value);
+  if (result.ec != std::errc{} || result.ptr != p->token.data() + p->token.size()) throw std::invalid_argument("unsigned integer out of range");
+  return value;
 }
 bool boolean(const Json& j) { auto* p = std::get_if<bool>(&j.value); if (!p) throw std::invalid_argument("boolean expected"); return *p; }
 std::string quote(const std::string& s) {

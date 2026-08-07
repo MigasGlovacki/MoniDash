@@ -21,6 +21,18 @@ Event event(const std::string& session, std::uint64_t id, std::int64_t time) { E
 
 void schema_tests() {
   Event e = event("s", 1, 10); e.sequence = 1; e.kind = EventKind::Death; DeathObservation d; d.level_id = "level"; d.raw_x = 0; d.mini = false; d.speed = 1.0; d.percentage_bin = 50; e.death = d;
+  auto exact_event_id = Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":9007199254740993,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}");
+  check(exact_event_id.event_id == 9007199254740993ULL, "event_id precision was lost");
+  const auto max_event = Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":18446744073709551615,\"sequence\":18446744073709551615,\"timestamp_ms\":9223372036854775807,\"kind\":\"level_started\"}");
+  check(max_event.event_id == std::numeric_limits<std::uint64_t>::max() && max_event.sequence == std::numeric_limits<std::uint64_t>::max() && max_event.timestamp_ms == std::numeric_limits<std::int64_t>::max(), "integer boundary was not preserved");
+  const auto max_manifest = Manifest::parse("{\"schema_version\":1,\"session_id\":\"s\",\"started_at_ms\":9223372036854775807,\"ended_at_ms\":9223372036854775807,\"status\":\"complete\"}");
+  check(max_manifest.started_at_ms == std::numeric_limits<std::int64_t>::max() && max_manifest.ended_at_ms == std::numeric_limits<std::int64_t>::max(), "manifest timestamp boundary was not preserved");
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":18446744073709551616,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":9223372036854775808,\"kind\":\"level_started\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1e3,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1.0,\"kind\":\"level_started\"}"); });
+  const auto floating = Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"death\",\"level_id\":\"level\",\"raw_x\":1.25,\"speed\":1e2}");
+  check(floating.death->raw_x == 1.25 && floating.death->speed == 100.0, "floating telemetry notation was rejected");
   rejects([&] { e.validate(); });
   rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"death\",\"level_id\":\"level\",\"percentage_bin\":50}"); });
   e.death->percentage_bin_convention = "verified-level-length-v1"; auto round = Event::parse(e.serialize()); check(round.death->percentage_bin == 50 && round.death->percentage_bin_convention == "verified-level-length-v1", "percentage convention lost");
