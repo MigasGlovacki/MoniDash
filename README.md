@@ -3,7 +3,9 @@
 MoniDash is a local-first Geometry Dash telemetry mod intended to complement,
 not replace, the existing Death Tracker mod.
 
-**Status:** Early design. MoniDash is not installable yet.
+**Status:** The v0.1.0 package is an inert loadable mod around the tested core.
+It does not yet capture gameplay or read Death Tracker. Windows and Geode
+runtime packaging have not been validated yet.
 
 ## Why two data sources?
 
@@ -46,6 +48,30 @@ The initial project does not aim to provide:
 - Automatic diagnosis
 - A replacement for Death Tracker
 
+## Build
+
+Core-only mode works on Linux without the Geode SDK:
+
+```sh
+cmake -S . -B build/core
+cmake --build build/core
+ctest --test-dir build/core --output-on-failure
+```
+
+Windows Geode package mode requires the Geode SDK source and CLI paths to be
+provided explicitly. Replace both placeholders with paths on the build PC:
+
+```sh
+cmake -S . -B build/geode \
+  -DMONIDASH_BUILD_GEODE_MOD=ON \
+  -DMONIDASH_GEODE_SDK=<path-to-geode-sdk-5.8.2> \
+  -DGEODE_CLI=<path-to-geode-cli-3.8.0>
+cmake --build build/geode --config Release
+```
+
+This repository does not claim that the Windows package has been built or
+installed until that orchestration is run on the target PC.
+
 ## Future distribution
 
 When MoniDash becomes installable, the intended first distribution path is
@@ -58,6 +84,6 @@ versioned release rather than rewriting an existing release.
 
 ## Project scope
 
-This repository currently contains documentation only. C++ code, CMake files,
-`mod.json`, CI, releases, networking, a relay, a hub, and telemetry collection
-are intentionally not part of this foundation.
+The package is intentionally inert. Gameplay hooks, telemetry capture, Death
+Tracker reading, networking, a relay, a hub, and generated user telemetry are
+not part of this slice.

@@ -1,0 +1,11 @@
+{
+  "geode": "5.8.2",
+  "gd": {
+    "win": "2.2081"
+  },
+  "id": "migas.monidash",
+  "name": "MoniDash",
+  "version": "v0.1.0",
+  "developer": "migas",
+  "description": "An early local-first telemetry foundation. This build does not yet capture gameplay or read Death Tracker."
+}
