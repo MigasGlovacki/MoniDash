@@ -3,10 +3,14 @@
 MoniDash is a local-first Geometry Dash telemetry mod intended to complement,
 not replace, the existing Death Tracker mod.
 
-**Status:** The real Windows mod runtime has validated one `level_started` event
-and exactly one `playerDestroyed` death event for one real death. Exit
-finalization and the Death Tracker snapshot remain unvalidated. The death
-candidate must not yet be treated as a solution to duplicate death callbacks.
+**Status:** The narrow MoniDash MVP flow has been validated in the real Windows
+runtime. A normal Geometry Dash exit produced a complete manifest, one
+`session_ended` event, and the sequence `session_started` ->
+`level_started(level_id 1)` -> `death(level_id 1)` -> `session_ended`. It also
+produced `death_tracker_snapshot/1-local/{metadata,general.dt}`; SHA-256 copies
+exactly matched the current Death Tracker sources. This validates the observed
+single-player flow only, not all level types, duplicate or dual-player cases,
+death causes, richer telemetry, analysis, networking, or PR merge status.
 
 ## Why two data sources?
 
@@ -70,9 +74,12 @@ cmake -S . -B build/geode \
 cmake --build build/geode --config Release
 ```
 
-Windows packaging, one level-start event, and one player-lifecycle death event
-have been validated on the target. Exit finalization and the Death Tracker
-snapshot still require Windows runtime validation.
+The narrow Windows MVP flow has been runtime-validated: packaging, manifest
+completion on a normal exit, the session/event sequence described above, and
+the Death Tracker snapshot files are present and source-matched by SHA-256.
+This is not a claim of generality across all level types or duplicate/dual-player
+cases, and does not include causes, richer telemetry, analysis, networking, or
+PR merge status.
 
 ## Future distribution
 
@@ -86,8 +93,11 @@ versioned release rather than rewriting an existing release.
 
 ## Project scope
 
-The current runtime observes level starts locally, includes a player-lifecycle
-death candidate, and is intended to take a read-only exit snapshot of selected
-Death Tracker files. Exit finalization and snapshot runtime remain unvalidated.
-Networking, a relay, a hub, and generated user telemetry are not part of this
-slice.
+The current runtime has a narrow, Windows-validated MVP flow: a normal exit
+produces a complete manifest with one `session_ended` event, the sequence
+`session_started` -> `level_started(level_id 1)` -> `death(level_id 1)` ->
+`session_ended`, and a read-only snapshot at
+`death_tracker_snapshot/1-local/{metadata,general.dt}` whose SHA-256 copies
+match the current Death Tracker sources. This scope does not claim coverage of
+all level types, duplicate or dual-player cases, death causes, richer telemetry,
+analysis, networking, or PR merge status.
