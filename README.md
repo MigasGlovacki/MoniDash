@@ -3,9 +3,9 @@
 MoniDash is a local-first Geometry Dash telemetry mod intended to complement,
 not replace, the existing Death Tracker mod.
 
-**Status:** The v0.1.0 package is an inert loadable mod around the tested core.
-It does not yet capture gameplay or read Death Tracker. Windows and Geode
-runtime packaging have not been validated yet.
+**Status:** The real mod runtime now recovers abandoned local sessions and starts
+one new session on load. It does not yet observe gameplay or read Death Tracker.
+Windows and Geode runtime packaging have not been validated yet.
 
 ## Why two data sources?
 
@@ -84,6 +84,6 @@ versioned release rather than rewriting an existing release.
 
 ## Project scope
 
-The package is intentionally inert. Gameplay hooks, telemetry capture, Death
-Tracker reading, networking, a relay, a hub, and generated user telemetry are
-not part of this slice.
+The current runtime only bootstraps local sessions. Gameplay hooks, gameplay
+observation, Death Tracker reading, networking, a relay, a hub, and generated
+user telemetry are not part of this slice.

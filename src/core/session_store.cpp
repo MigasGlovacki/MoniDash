@@ -4,6 +4,10 @@
 #include <limits>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace monidash { namespace {
 void fail_if(const SessionStore::FailureInjector& f, const std::string& stage) {
   if (f && f(stage)) {
@@ -16,6 +20,20 @@ std::string read_all(const std::filesystem::path& p) {
     throw std::runtime_error("cannot read " + p.string());
   }
   return {std::istreambuf_iterator<char>(in), {}};
+}
+void replace_file_atomically(const std::filesystem::path& temporary, const std::filesystem::path& target) {
+#ifdef _WIN32
+  if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    throw std::runtime_error("manifest replacement failed");
+  }
+#else
+  std::error_code ec;
+  std::filesystem::rename(temporary, target, ec);
+  if (ec) {
+    std::filesystem::remove(temporary);
+    throw std::runtime_error("manifest replacement failed: " + ec.message());
+  }
+#endif
 }
 }
 SessionStore::SessionStore(std::filesystem::path root, FailureInjector failure) : root_(std::move(root)), failure_(std::move(failure)) {}
@@ -110,12 +128,7 @@ void SessionStore::write_manifest(const Manifest& m, bool atomic) {
   }
   // filesystem::rename maps to replace-on-Linux rename(2); other platforms need validation before relying on this.
   fail_if(failure_, "manifest_rename");
-  std::error_code ec;
-  std::filesystem::rename(temp, target, ec);
-  if (ec) {
-    std::filesystem::remove(temp);
-    throw std::runtime_error("manifest replacement failed: " + ec.message());
-  }
+  replace_file_atomically(temp, target);
 }
 void SessionStore::finalize(std::int64_t timestamp_ms) {
   if (!started_ || finalized_) {
@@ -190,5 +203,33 @@ std::vector<RecoveryResult> SessionStore::scan(const std::filesystem::path& root
     }
   }
   return result;
+}
+std::size_t SessionStore::recover(const std::filesystem::path& root) {
+  std::size_t recovered = 0;
+  for (const auto& result : scan(root)) {
+    if (result.status != RecoveryStatus::Active) {
+      continue;
+    }
+    const auto manifest_path = result.path / "manifest.json";
+    Manifest manifest = Manifest::parse(read_all(manifest_path));
+    if (manifest.status != "active" || manifest.session_id != result.path.filename().string()) {
+      continue;
+    }
+    manifest.status = "interrupted";
+    const auto temporary = result.path / "manifest.json.tmp";
+    {
+      std::ofstream out(temporary, std::ios::trunc);
+      if (!out || !(out << manifest.serialize() << '\n')) {
+        throw std::runtime_error("recovery manifest write failed");
+      }
+      out.flush();
+      if (!out) {
+        throw std::runtime_error("recovery manifest flush failed");
+      }
+    }
+    replace_file_atomically(temporary, manifest_path);
+    ++recovered;
+  }
+  return recovered;
 }
 } // namespace monidash

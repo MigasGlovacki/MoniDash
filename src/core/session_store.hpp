@@ -21,6 +21,7 @@ class SessionStore {
   void finalize(std::int64_t timestamp_ms);
   const std::filesystem::path& session_path() const { return session_path_; }
   static std::vector<RecoveryResult> scan(const std::filesystem::path& root);
+  static std::size_t recover(const std::filesystem::path& root);
  private:
   std::filesystem::path root_; std::filesystem::path session_path_; FailureInjector failure_;
   std::uint64_t next_sequence_{1}; std::uint64_t last_event_id_{0}; std::int64_t last_timestamp_{0};

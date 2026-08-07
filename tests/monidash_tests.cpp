@@ -66,8 +66,36 @@ void storage_tests() {
   const auto before = read(recovery / "truncated" / "events.jsonl"); auto found = SessionStore::scan(recovery); bool active = false, corrupt = false, missing = false; for (const auto& r : found) { active |= r.status == RecoveryStatus::Active; corrupt |= r.status == RecoveryStatus::Corrupt; missing |= r.status == RecoveryStatus::Missing; } check(active && corrupt && missing, "recovery statuses"); check(read(recovery / "truncated" / "events.jsonl") == before, "recovery altered events");
 }
 
+void recovery_tests() {
+  auto root = temp("recovery-operation");
+  std::filesystem::create_directories(root / "active");
+  write(root / "active" / "manifest.json", Manifest{1, "active", 10, std::nullopt, "active"}.serialize());
+  write(root / "active" / "events.jsonl", "");
+  std::filesystem::create_directories(root / "complete");
+  write(root / "complete" / "manifest.json", Manifest{1, "complete", 10, 20, "complete"}.serialize());
+  write(root / "complete" / "events.jsonl", "complete bytes\n");
+  std::filesystem::create_directories(root / "corrupt");
+  write(root / "corrupt" / "manifest.json", "not json");
+  write(root / "corrupt" / "events.jsonl", "corrupt bytes\n");
+  std::filesystem::create_directories(root / "missing");
+  write(root / "missing" / "manifest.json", Manifest{1, "missing", 10, std::nullopt, "active"}.serialize());
+
+  const auto active_events = read(root / "active" / "events.jsonl");
+  const auto complete_manifest = read(root / "complete" / "manifest.json");
+  const auto corrupt_manifest = read(root / "corrupt" / "manifest.json");
+  const auto missing_manifest = read(root / "missing" / "manifest.json");
+  check(SessionStore::recover(root) == 1, "recovery did not change exactly one active session");
+  const auto recovered = Manifest::parse(read(root / "active" / "manifest.json"));
+  check(recovered.status == "interrupted" && !recovered.ended_at_ms, "active session was not interrupted without an end time");
+  check(read(root / "active" / "events.jsonl") == active_events, "recovery altered active events");
+  check(read(root / "complete" / "manifest.json") == complete_manifest, "recovery altered complete session");
+  check(read(root / "corrupt" / "manifest.json") == corrupt_manifest, "recovery altered corrupt session");
+  check(read(root / "missing" / "manifest.json") == missing_manifest, "recovery altered incomplete session");
+  check(SessionStore::recover(root) == 0, "recovery was not idempotent");
+}
+
 void core_tests() {
   auto root = temp("core"); SessionStore store(root); std::int64_t clock = 100; MoniDashCore core(store, [&] { return clock++; }, [] { return std::string("core-session"); }); core.start(); Death death; death.level_id = "level"; death.speed = 1.2; core.record_death(death); core.shutdown(); auto events = read(root / "core-session" / "events.jsonl"); check(events.find("session_ended") != std::string::npos && events.find("\"sequence\":4") == std::string::npos, "unexpected lifecycle ordering"); check(read(root / "core-session" / "manifest.json").find("complete") != std::string::npos, "core did not finalize");
 }
 }
-int main() { try { schema_tests(); storage_tests(); core_tests(); std::cout << "passed " << checks << " checks\n"; return 0; } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; } }
+int main() { try { schema_tests(); storage_tests(); recovery_tests(); core_tests(); std::cout << "passed " << checks << " checks\n"; return 0; } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; } }
