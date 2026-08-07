@@ -92,6 +92,53 @@ void recovery_tests() {
   check(read(root / "corrupt" / "manifest.json") == corrupt_manifest, "recovery altered corrupt session");
   check(read(root / "missing" / "manifest.json") == missing_manifest, "recovery altered incomplete session");
   check(SessionStore::recover(root) == 0, "recovery was not idempotent");
+
+  auto lifecycle = temp("recovery-lifecycle");
+  auto make_event = [](const std::string& session, std::uint64_t id, std::uint64_t sequence, std::int64_t timestamp, EventKind kind) {
+    Event e; e.session_id = session; e.event_id = id; e.sequence = sequence; e.timestamp_ms = timestamp; e.kind = kind; return e;
+  };
+  const auto started = make_event("terminal", 1, 1, 10, EventKind::SessionStarted).serialize() + "\n";
+  const auto level = event("terminal", 2, 20); const auto level_line = [&] { auto e = level; e.sequence = 2; return e.serialize() + "\n"; }();
+  const auto ended = make_event("terminal", 3, 3, 30, EventKind::SessionEnded).serialize() + "\n";
+  const auto valid_events = started + level_line + ended;
+  std::filesystem::create_directories(lifecycle / "terminal");
+  write(lifecycle / "terminal" / "manifest.json", Manifest{1, "terminal", 10, std::nullopt, "active"}.serialize());
+  write(lifecycle / "terminal" / "events.jsonl", valid_events);
+  check(SessionStore::recover(lifecycle) == 1, "terminal active session was not recovered");
+  const auto terminal_manifest = Manifest::parse(read(lifecycle / "terminal" / "manifest.json"));
+  check(terminal_manifest.status == "complete" && terminal_manifest.ended_at_ms == 30, "terminal event did not publish complete manifest");
+  check(read(lifecycle / "terminal" / "events.jsonl") == valid_events, "terminal recovery altered events");
+
+  auto stream_for = [&](const std::string& id, const std::string& shape) {
+    const auto start_line = make_event(id, 1, 1, 10, EventKind::SessionStarted).serialize() + "\n";
+    auto level_event = event(id, shape == "no-start" ? 1 : 3, 20); level_event.sequence = shape == "no-start" ? 1 : 3;
+    const auto level_for_id = level_event.serialize() + "\n";
+    const auto end_line = make_event(id, 2, 2, 30, EventKind::SessionEnded).serialize() + "\n";
+    const auto repeated_end_line = make_event(id, 4, 4, 40, EventKind::SessionEnded).serialize() + "\n";
+    if (shape == "no-start") return level_for_id;
+    if (shape == "ended-early" || shape == "after-end") return start_line + end_line + level_for_id;
+    return start_line + end_line + repeated_end_line;
+  };
+  const std::vector<std::pair<std::string, std::string>> invalid_streams = {
+    {"no-start", stream_for("no-start", "no-start")},
+    {"ended-early", stream_for("ended-early", "ended-early")},
+    {"repeated-end", stream_for("repeated-end", "repeated-end")},
+    {"after-end", stream_for("after-end", "after-end")},
+  };
+  for (const auto& [id, events] : invalid_streams) {
+    std::filesystem::create_directories(lifecycle / id);
+    write(lifecycle / id / "manifest.json", Manifest{1, id, 10, std::nullopt, "active"}.serialize());
+    write(lifecycle / id / "events.jsonl", events);
+    const auto manifest_before = read(lifecycle / id / "manifest.json");
+    const auto events_before = read(lifecycle / id / "events.jsonl");
+    bool corrupt = false;
+    for (const auto& result : SessionStore::scan(lifecycle)) {
+      if (result.path.filename() == id) corrupt = result.status == RecoveryStatus::Corrupt;
+    }
+    check(corrupt, "invalid lifecycle stream was accepted");
+    check(SessionStore::recover(lifecycle) == 0, "corrupt lifecycle stream was recovered");
+    check(read(lifecycle / id / "manifest.json") == manifest_before && read(lifecycle / id / "events.jsonl") == events_before, "corrupt lifecycle stream was mutated");
+  }
 }
 
 void core_tests() {

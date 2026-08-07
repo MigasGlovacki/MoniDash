@@ -1,5 +1,10 @@
 # MoniDash
 
-MoniDash is an early local-first telemetry foundation for Geometry Dash.
-This initial package is inert: it does not yet capture gameplay or read Death
-Tracker. Windows and Geode runtime packaging have not been validated yet.
+MoniDash is a narrow Windows-validated local MVP for Geometry Dash. It records
+session start, `level_started`, minimal player death, and normal-exit
+`session_ended`, plus a read-only exact-key conditional snapshot of Death
+Tracker metadata/general.dt.
+
+The validation covers only the observed flow. It does not claim all level
+types, duplicate or dual play, causes or richer telemetry, analysis, networking,
+releases, or PR merging.

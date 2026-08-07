@@ -185,15 +185,17 @@ std::vector<RecoveryResult> SessionStore::scan(const std::filesystem::path& root
       if (manifest.status != "active") {
         continue;
       }
-      std::ifstream in(events_path); std::string line; std::uint64_t sequence = 0, event_id = 0; std::int64_t timestamp = manifest.started_at_ms;
+      std::ifstream in(events_path); std::string line; std::uint64_t sequence = 0, event_id = 0; std::int64_t timestamp = manifest.started_at_ms; bool saw_started = false, saw_ended = false;
       while (std::getline(in, line)) {
         if (line.empty()) {
           throw std::invalid_argument("empty JSONL line");
         }
         const Event event = Event::parse(line);
-        if (event.session_id != manifest.session_id || event.sequence != ++sequence || event.event_id <= event_id || event.timestamp_ms < timestamp) {
+        if (event.session_id != manifest.session_id || event.sequence != ++sequence || event.event_id <= event_id || event.timestamp_ms < timestamp || (!saw_started && event.kind != EventKind::SessionStarted) || (saw_ended && event.kind != EventKind::SessionEnded) || (event.kind == EventKind::SessionStarted && saw_started) || (event.kind == EventKind::SessionEnded && saw_ended)) {
           throw std::invalid_argument("event order/session violation");
         }
+        saw_started = saw_started || event.kind == EventKind::SessionStarted;
+        saw_ended = saw_ended || event.kind == EventKind::SessionEnded;
         event_id = event.event_id;
         timestamp = event.timestamp_ms;
       }
@@ -218,7 +220,18 @@ std::size_t SessionStore::recover(const std::filesystem::path& root) {
     if (manifest.status != "active" || manifest.session_id != result.path.filename().string()) {
       continue;
     }
-    manifest.status = "interrupted";
+    std::ifstream events(result.path / "events.jsonl");
+    std::string line;
+    std::optional<std::int64_t> ended_at_ms;
+    while (std::getline(events, line)) {
+      const Event event = Event::parse(line);
+      if (event.kind == EventKind::SessionEnded) ended_at_ms = event.timestamp_ms;
+    }
+    if (!events.eof()) {
+      throw std::runtime_error("recovery event read failed");
+    }
+    manifest.status = ended_at_ms ? "complete" : "interrupted";
+    manifest.ended_at_ms = ended_at_ms;
     const auto temporary = result.path / "manifest.json.tmp";
     {
       std::ofstream out(temporary, std::ios::trunc);
