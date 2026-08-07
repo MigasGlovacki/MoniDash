@@ -21,8 +21,14 @@ Event event(const std::string& session, std::uint64_t id, std::int64_t time) { E
 
 void schema_tests() {
   Event e = event("s", 1, 10); e.sequence = 1; e.kind = EventKind::Death; DeathObservation d; d.level_id = "level"; d.raw_x = 0; d.mini = false; d.speed = 1.0; d.percentage_bin = 50; e.death = d;
-  const auto text = e.serialize(); check(text.find("percentage_bin") == std::string::npos, "unmarked percentage bin inferred");
+  rejects([&] { e.validate(); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"death\",\"level_id\":\"level\",\"percentage_bin\":50}"); });
   e.death->percentage_bin_convention = "verified-level-length-v1"; auto round = Event::parse(e.serialize()); check(round.death->percentage_bin == 50 && round.death->percentage_bin_convention == "verified-level-length-v1", "percentage convention lost");
+  auto escaped = event("line\n\"\\\b\f\r\t\001", 1, 10); escaped.sequence = 1; escaped.kind = EventKind::LevelStarted; auto escaped_round = Event::parse(escaped.serialize()); check(escaped_round.session_id == escaped.session_id, "control characters did not round-trip");
+  auto unicode = Event::parse("{\"schema_version\":1,\"session_id\":\"\\u006c\\u00e9\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); check(unicode.session_id == "l\xc3\xa9", "unicode escape did not parse");
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":+1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":01,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
+  rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1.,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
   rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":-1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\"}"); });
   rejects([&] { Event::parse("{\"schema_version\":1,\"session_id\":\"s\",\"event_id\":1,\"sequence\":1,\"timestamp_ms\":1,\"kind\":\"level_started\",\"x\":NaN}"); });
   rejects([&] { auto x = e; x.death->speed = std::numeric_limits<double>::infinity(); x.serialize(); });
@@ -32,10 +38,11 @@ void schema_tests() {
 
 void storage_tests() {
   auto root = temp("storage"); SessionStore store(root); store.start("one", 1); rejects_any([&] { SessionStore duplicate(root); duplicate.start("one", 2); });
+  auto unsafe = temp("unsafe"); const auto escaped = unsafe.parent_path() / "monidash-unsafe-escape"; std::filesystem::remove_all(escaped); rejects_any([&] { SessionStore s(unsafe); s.start("../monidash-unsafe-escape", 1); }); rejects_any([&] { SessionStore s(unsafe); s.start((unsafe.parent_path() / "absolute").string(), 1); }); rejects_any([&] { SessionStore s(unsafe); s.start("embedded/separator", 1); }); check(!std::filesystem::exists(escaped), "unsafe session escaped root");
   store.append(event("one", 7, 2)); rejects([&] { store.append(event("other", 8, 3)); }); rejects([&] { store.append(event("one", 6, 3)); }); rejects([&] { store.append(event("one", 8, 1)); });
   const auto content = read(root / "one" / "events.jsonl"); check(content.find("\"event_id\":7") != std::string::npos, "event id not preserved");
   int failures = 0; auto fail_root = temp("retry"); SessionStore failing(fail_root, [&](const std::string& stage) { return stage == "manifest_rename" && failures++ == 0; }); failing.start("retry", 1); failing.append(event("retry", 1, 2)); rejects_any([&] { failing.finalize(3); }); failing.finalize(3); const auto log = read(fail_root / "retry" / "events.jsonl"); check(log.find("session_ended") != std::string::npos && log.find("session_ended", log.find("session_ended") + 1) == std::string::npos, "duplicate session end on retry");
-  auto recovery = temp("recovery"); std::filesystem::create_directories(recovery / "active"); write(recovery / "active" / "manifest.json", Manifest{1, "active", 1, std::nullopt, "active"}.serialize()); auto active_event = event("active", 1, 1); active_event.sequence = 1; write(recovery / "active" / "events.jsonl", active_event.serialize() + '\n');
+  auto recovery = temp("recovery"); std::filesystem::create_directories(recovery / "active"); write(recovery / "active" / "manifest.json", Manifest{1, "active", 1, std::nullopt, "active"}.serialize()); write(recovery / "active" / "events.jsonl", "");
   std::filesystem::create_directories(recovery / "truncated"); write(recovery / "truncated" / "manifest.json", Manifest{1, "truncated", 1, std::nullopt, "active"}.serialize()); write(recovery / "truncated" / "events.jsonl", "{partial");
   std::filesystem::create_directories(recovery / "missing"); std::filesystem::create_directories(recovery / "badmanifest"); write(recovery / "badmanifest" / "manifest.json", "nope");
   const auto before = read(recovery / "truncated" / "events.jsonl"); auto found = SessionStore::scan(recovery); bool active = false, corrupt = false, missing = false; for (const auto& r : found) { active |= r.status == RecoveryStatus::Active; corrupt |= r.status == RecoveryStatus::Corrupt; missing |= r.status == RecoveryStatus::Missing; } check(active && corrupt && missing, "recovery statuses"); check(read(recovery / "truncated" / "events.jsonl") == before, "recovery altered events");

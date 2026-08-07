@@ -22,7 +22,10 @@ void SessionStore::start(const std::string& id, std::int64_t timestamp_ms) {
   if (started_) {
     throw std::logic_error("already started");
   }
-  if (id.empty() || timestamp_ms < 0) {
+  const std::filesystem::path id_path(id);
+  const bool has_separator = id.find('/') != std::string::npos || id.find('\\') != std::string::npos;
+  const bool is_single_filename = id_path.lexically_normal().filename() == id_path;
+  if (id.empty() || id == "." || id == ".." || has_separator || id_path.is_absolute() || !is_single_filename || timestamp_ms < 0) {
     throw std::invalid_argument("invalid session start");
   }
   std::error_code ec;
@@ -159,7 +162,7 @@ std::vector<RecoveryResult> SessionStore::scan(const std::filesystem::path& root
       if (manifest.status != "active") {
         continue;
       }
-      std::ifstream in(events_path); std::string line; std::uint64_t sequence = 0, event_id = 0; std::int64_t timestamp = manifest.started_at_ms; bool any = false;
+      std::ifstream in(events_path); std::string line; std::uint64_t sequence = 0, event_id = 0; std::int64_t timestamp = manifest.started_at_ms;
       while (std::getline(in, line)) {
         if (line.empty()) {
           throw std::invalid_argument("empty JSONL line");
@@ -170,9 +173,8 @@ std::vector<RecoveryResult> SessionStore::scan(const std::filesystem::path& root
         }
         event_id = event.event_id;
         timestamp = event.timestamp_ms;
-        any = true;
       }
-      if (!in.eof() || !any) {
+      if (!in.eof()) {
         throw std::invalid_argument("invalid event log");
       }
       result.push_back({dir, RecoveryStatus::Active});

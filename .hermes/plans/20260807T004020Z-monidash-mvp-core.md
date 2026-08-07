@@ -47,8 +47,9 @@ online service as a substitute.
 
 ### Assumptions
 
-- The first implementation can deliver and test durable session/schema logic
-  without a live Geometry Dash process.
+- The first implementation can deliver and test session/schema logic without a
+  live Geometry Dash process, with stream flush and write-error checks;
+  power-loss durability is not claimed.
 - Events can represent unavailable observations as omitted optional fields, with
   a clear distinction between absent and known false/zero.
 - JSONL is the append format; a manifest is separate metadata and the final
