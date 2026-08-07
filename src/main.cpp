@@ -23,7 +23,7 @@ std::int64_t unix_milliseconds() {
 }
 }
 
-$modify(PlayLayer) {
+class $modify(PlayLayer) {
   bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
     if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
       return false;
