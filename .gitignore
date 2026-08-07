@@ -1,0 +1,47 @@
+# Local telemetry and session data
+telemetry/
+sessions/
+logs/
+local-data/
+analysis-output/
+death-tracker-data/
+death-tracker/
+*.telemetry.log
+*.session.log
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# CMake and Geode build artifacts
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+_deps/
+*.geode
+
+# IDE and editor files
+.idea/
+.vs/
+*.suo
+*.user
+*.swp
+*.swo
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Operating-system junk
+.DS_Store
+Thumbs.db
+Desktop.ini
