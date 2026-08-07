@@ -1,5 +1,7 @@
 #include <Geode/Geode.hpp>
 
+using namespace geode::prelude;
+
 #include "core/monidash_core.hpp"
 
 #include <chrono>
