@@ -58,9 +58,9 @@ class $modify(PlayLayer) {
   }
 
   void destroyPlayer(PlayerObject* player, GameObject* object) {
+    const auto player_was_alive = player ? !player->m_isDead : false;
     PlayLayer::destroyPlayer(player, object);
-    if (!core || !active_level_id) {
-      log::error("MoniDash omitted death: no active verified level");
+    if (!core || !active_level_id || !player || !player_was_alive) {
       return;
     }
     try {
