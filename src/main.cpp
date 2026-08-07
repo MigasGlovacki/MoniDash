@@ -16,6 +16,7 @@ using namespace geode::prelude;
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -52,6 +53,8 @@ void snapshot_death_tracker(const std::filesystem::path& session_path) {
       std::error_code error;
       if (std::filesystem::is_directory(candidate, error)) {
         candidates.emplace_back(key, candidate);
+      } else if (error == std::errc::no_such_file_or_directory) {
+        continue;
       } else if (error) {
         log::error("MoniDash omitted Death Tracker snapshot: cannot inspect {}: {}", candidate.string(), error.message());
         return;
