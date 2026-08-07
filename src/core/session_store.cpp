@@ -1,6 +1,7 @@
 #include "core/session_store.hpp"
 
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 
 namespace monidash { namespace {
@@ -56,6 +57,9 @@ void SessionStore::start(const std::string& id, std::int64_t timestamp_ms) {
 void SessionStore::append(Event event) {
   if (!started_ || finalized_) {
     throw std::logic_error("session is not active");
+  }
+  if (next_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
+    throw std::invalid_argument("event sequence exhausted");
   }
   if (event.session_id != session_path_.filename().string()) {
     throw std::invalid_argument("event session mismatch");
@@ -119,6 +123,9 @@ void SessionStore::finalize(std::int64_t timestamp_ms) {
   }
   if (timestamp_ms < last_timestamp_) {
     throw std::invalid_argument("non-monotonic finalization time");
+  }
+  if (!end_appended_ && last_event_id_ == std::numeric_limits<std::uint64_t>::max()) {
+    throw std::invalid_argument("event id exhausted");
   }
   if (!end_appended_) {
     Event end;

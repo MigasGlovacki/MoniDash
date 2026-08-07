@@ -1,6 +1,7 @@
 #include "core/schema.hpp"
 
 #include <charconv>
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
@@ -151,15 +152,17 @@ std::string str(const Json& j) { auto* p = std::get_if<std::string>(&j.value); i
 double num(const Json& j) {
   const auto* p = std::get_if<JsonNumber>(&j.value);
   if (!p) throw std::invalid_argument("finite number expected");
+  errno = 0;
   char* end = nullptr;
   const double value = std::strtod(p->token.c_str(), &end);
-  if (end != p->token.c_str() + p->token.size() || !std::isfinite(value)) throw std::invalid_argument("finite number expected");
+  if (end != p->token.c_str() + p->token.size() || errno == ERANGE || !std::isfinite(value)) throw std::invalid_argument("finite number expected");
   return value;
 }
 bool canonical_integer_token(const std::string& token) {
   std::size_t first = token.front() == '-' ? 1 : 0;
   if (first == token.size()) return false;
   if (token[first] == '0' && token.size() - first > 1) return false;
+  if (first == 1 && token[first] == '0') return false;
   for (std::size_t i = first; i < token.size(); ++i) {
     if (token[i] < '0' || token[i] > '9') return false;
   }
@@ -239,6 +242,7 @@ void Event::validate() const {
     if (death->percentage_bin_convention && death->percentage_bin_convention->empty()) {
       throw std::invalid_argument("empty percentage convention");
     }
+    if (death->attempt && *death->attempt < 0) throw std::invalid_argument("attempt out of range");
     if (death->raw_x && !std::isfinite(*death->raw_x)) throw std::invalid_argument("invalid raw_x");
     if (death->speed && !std::isfinite(*death->speed)) throw std::invalid_argument("invalid speed");
   } else if (death) {
