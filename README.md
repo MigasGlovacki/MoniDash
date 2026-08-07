@@ -81,15 +81,12 @@ This is not a claim of generality across all level types or duplicate/dual-playe
 cases, and does not include causes, richer telemetry, analysis, networking, or
 PR merge status.
 
-## Future distribution
+## Distribution and updates
 
-When MoniDash becomes installable, the intended first distribution path is
-versioned GitHub Releases. A later option may be publication through the
-Geode Index for in-game installation and updates; the Geode Index is not set
-up for this project yet.
-
-Each release should be immutable. Changes should be published as a new
-versioned release rather than rewriting an existing release.
+MoniDash v1.0 will not be published to the Geode Index and will not offer
+automated GitHub-based updates. GitHub remains the project's source-control and
+review platform. During development and testing, builds, installs, and updates
+will be coordinated manually. This repository does not claim a public release.
 
 ## Project scope
 
