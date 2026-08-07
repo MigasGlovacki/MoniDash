@@ -10,11 +10,13 @@ using namespace geode::prelude;
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace {
 std::unique_ptr<monidash::SessionStore> store;
 std::unique_ptr<monidash::MoniDashCore> core;
+std::optional<std::string> active_level_id;
 std::uint64_t sequence = 0;
 
 std::int64_t unix_milliseconds() {
@@ -25,6 +27,7 @@ std::int64_t unix_milliseconds() {
 
 class $modify(PlayLayer) {
   bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+    active_level_id.reset();
     if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
       return false;
     }
@@ -44,6 +47,7 @@ class $modify(PlayLayer) {
       }
       const auto level_id = std::to_string(raw_level_id);
       core->record_level_started(level_id);
+      active_level_id = level_id;
       log::info("MoniDash recorded level-start {}", level_id);
     } catch (const std::exception& error) {
       log::error("MoniDash omitted level-start: {}", error.what());
@@ -51,6 +55,23 @@ class $modify(PlayLayer) {
       log::error("MoniDash omitted level-start: level ID conversion failed");
     }
     return true;
+  }
+
+  void destroyPlayer(PlayerObject* player, GameObject* object) {
+    PlayLayer::destroyPlayer(player, object);
+    if (!core || !active_level_id) {
+      log::error("MoniDash omitted death: no active verified level");
+      return;
+    }
+    try {
+      monidash::Death death;
+      death.level_id = *active_level_id;
+      core->record_death(death);
+    } catch (const std::exception& error) {
+      log::error("MoniDash omitted death: {}", error.what());
+    } catch (...) {
+      log::error("MoniDash omitted death: recording failed");
+    }
   }
 };
 
