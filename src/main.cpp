@@ -1,5 +1,6 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/PlayerObject.hpp>
 
 using namespace geode::prelude;
 
@@ -57,16 +58,16 @@ class $modify(PlayLayer) {
     return true;
   }
 
-  void destroyPlayer(PlayerObject* player, GameObject* object) {
-    const auto player_was_alive = player ? !player->m_isDead : false;
-    PlayLayer::destroyPlayer(player, object);
-    if (!core || !active_level_id || !player || !player_was_alive) {
+};
+
+class $modify(PlayerObject) {
+  void playerDestroyed(bool noEffects) {
+    PlayerObject::playerDestroyed(noEffects);
+    if (!core || !active_level_id) {
       return;
     }
     try {
-      monidash::Death death;
-      death.level_id = *active_level_id;
-      core->record_death(death);
+      core->record_death(monidash::Death{*active_level_id});
     } catch (const std::exception& error) {
       log::error("MoniDash omitted death: {}", error.what());
     } catch (...) {

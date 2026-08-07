@@ -4,10 +4,10 @@ MoniDash is a local-first Geometry Dash telemetry mod intended to complement,
 not replace, the existing Death Tracker mod.
 
 **Status:** The real mod runtime now recovers abandoned local sessions, starts one
-new session on load, and contains an alive-to-dead transition guard for death
-callbacks with only a verified level identifier. Windows/Geode packaging and
-session runtime have been validated; the transition guard still requires Windows
-runtime validation, so death observation is not yet validated.
+new session on load, and contains a player-lifecycle death candidate using only a
+verified level identifier. The `PlayerObject::playerDestroyed` candidate has not
+been runtime validated. It must not yet be treated as a solution to duplicate
+death callbacks. Windows/Geode packaging and session runtime have been validated.
 
 ## Why two data sources?
 
@@ -72,8 +72,8 @@ cmake --build build/geode --config Release
 ```
 
 The Windows package and session bootstrap have been validated on the target PC.
-The level-start and death observation adapters still require target runtime
-validation.
+The level-start and player-lifecycle death observation adapters still require
+target runtime validation.
 
 ## Future distribution
 
@@ -87,7 +87,6 @@ versioned release rather than rewriting an existing release.
 
 ## Project scope
 
-The current runtime observes level starts locally and includes a guarded death
-adapter. Its transition semantics still require Windows runtime validation.
-Death Tracker reading, networking, a relay, a hub, and generated user telemetry
-are not part of this slice.
+The current runtime observes level starts locally and includes an unvalidated
+player-lifecycle death candidate. Death Tracker reading, networking, a relay, a
+hub, and generated user telemetry are not part of this slice.
