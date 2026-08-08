@@ -50,6 +50,10 @@ add_test(
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/geode_level_start_contract.cmake
 )
 add_test(
+    NAME monidash_geode_editor_level_id_contract
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/geode_editor_level_id_contract.cmake
+)
+add_test(
     NAME monidash_geode_death_contract
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/geode_death_contract.cmake
 )
