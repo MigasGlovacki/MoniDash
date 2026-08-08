@@ -3,6 +3,7 @@
 #include <Geode/loader/Loader.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
+#include <cvolton.level-id-api/include/EditorIDs.hpp>
 
 using namespace geode::prelude;
 
@@ -120,12 +121,17 @@ class $modify(PlayLayer) {
       return true;
     }
     try {
-      const auto raw_level_id = level->m_levelID.value();
+      const auto raw_level_id = level->m_levelType == GJLevelType::Editor
+          ? EditorIDs::getID(level)
+          : level->m_levelID.value();
       if (raw_level_id <= 0) {
         log::error("MoniDash omitted level-start: invalid level ID {}", raw_level_id);
         return true;
       }
-      const auto level_id = std::to_string(raw_level_id);
+      auto level_id = std::to_string(raw_level_id);
+      if (level->m_levelType == GJLevelType::Editor) {
+        level_id += "-editor";
+      }
       core->record_level_started(level_id);
       active_level_id = level_id;
       log::info("MoniDash recorded level-start {}", level_id);
