@@ -23,11 +23,12 @@ def _session(raw_lines: list[str]) -> bytes:
 
 SESSION_WITH_COPY = _session(
     [
-        '{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"0","monotonic_seconds":0.000,"session_id":"s1","level":{"id":123,"name":"Test","creator":"Creator","length_category":4,"extent_x":10000.000,"local_or_saved":true,"platformer":false}}',
+        '{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"0","monotonic_seconds":0.000,"session_id":"s1","local_date":"2026-08-12","level":{"id":123,"name":"Test","creator":"Creator","length_category":4,"extent_x":10000.000,"stars":10,"is_demon":true,"local_or_saved":true,"platformer":false,"mirror_mode":false}}',
         '{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"1","monotonic_seconds":0.100,"attempt_id":"s1-attempt-1","attempt_number":1,"training_segment":true,"start_x":5000.000}',
         '{"schema_version":"2.0.0","event_type":"copy_level_link","timestamp_ms":"1","monotonic_seconds":0.100,"attempt_id":"s1-attempt-1","copy_level_id":123,"official_level_id":null,"link_status":"needs_confirmation","start_x":5000.000}',
         '{"schema_version":"2.0.0","event_type":"attempt_ended","timestamp_ms":"3","monotonic_seconds":10.050,"attempt_id":"s1-attempt-1","outcome":"completed","start_x":5000.000,"end_x":10000.000,"training_segment":true}',
-        '{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"4","monotonic_seconds":10.100,"session_id":"s1"}',
+        '{"schema_version":"2.0.0","event_type":"death_tracker_snapshot","timestamp_ms":"4","monotonic_seconds":10.060,"session_id":"s1","level_id":123,"level_name":"Test","attempts":42,"new_best_percent":38,"real_end_percent":41,"difficulty":10,"general_dt":"raw"}',
+        '{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"5","monotonic_seconds":10.100,"session_id":"s1"}',
     ]
 )
 
@@ -62,10 +63,44 @@ def test_enrich_offline_keeps_observed_separate(tmp_path: Path) -> None:
     assert level["observed"]["name"] == "Test"
     assert level["observed"]["training_copies"] == 1
     assert level["registry"] == {}
+    # Stats da sessão: data local, tentativas e duração.
+    assert enriched.stats["local_date"] == "2026-08-12"
+    assert enriched.stats["attempts"] == 1
+    assert enriched.stats["duration_seconds"] == 10.1
+
+
+def test_render_markdown_diary_header(tmp_path: Path) -> None:
+    parsed = parse_session(SESSION_WITH_COPY)
+    client = LevelClient(cache_path=tmp_path / "cache.json", offline=True)
+    enriched = enrich_session(parsed, client)
+    md = render_markdown(enriched)
+    # Cabeçalho de diário com data, duração e resumo.
+    assert "### Sessão — 2026-08-12" in md
+    assert "Duração: 10s" in md
+    assert "1 tentativas" in md
+
+
+def test_render_markdown_shows_death_tracker_best(tmp_path: Path) -> None:
+    """Melhor marca vem do death_tracker_snapshot, não da API."""
+    parsed = parse_session(SESSION_WITH_COPY)
+    client = LevelClient(cache_path=tmp_path / "cache.json", offline=True)
+    enriched = enrich_session(parsed, client)
+    md = render_markdown(enriched)
+    assert "Melhor marca: **38%**, 42 tentativas" in md
 
 
 def test_render_markdown_warns_when_unregistered(tmp_path: Path) -> None:
-    parsed = parse_session(SESSION_WITH_COPY)
+    """Sem registro na API e sem death tracker, o diário avisa em vez de chutar."""
+    raw = _session(
+        [
+            '{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"0","monotonic_seconds":0.000,"session_id":"s2","local_date":"2026-08-12","level":{"id":77,"name":"DeathMix","creator":"T","length_category":4,"extent_x":20000.000,"stars":0,"is_demon":true,"local_or_saved":true,"platformer":false,"mirror_mode":false}}',
+            '{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"1","monotonic_seconds":0.100,"attempt_id":"s2-attempt-1","attempt_number":1,"training_segment":true,"start_x":5000.000}',
+            '{"schema_version":"2.0.0","event_type":"copy_level_link","timestamp_ms":"1","monotonic_seconds":0.100,"attempt_id":"s2-attempt-1","copy_level_id":77,"official_level_id":null,"link_status":"needs_confirmation","start_x":5000.000}',
+            '{"schema_version":"2.0.0","event_type":"attempt_ended","timestamp_ms":"3","monotonic_seconds":10.050,"attempt_id":"s2-attempt-1","outcome":"completed","start_x":5000.000,"end_x":10000.000,"training_segment":true}',
+            '{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"4","monotonic_seconds":10.100,"session_id":"s2"}',
+        ]
+    )
+    parsed = parse_session(raw)
     client = LevelClient(cache_path=tmp_path / "cache.json", offline=True)
     enriched = enrich_session(parsed, client)
     md = render_markdown(enriched)
@@ -76,12 +111,13 @@ def test_render_markdown_warns_when_unregistered(tmp_path: Path) -> None:
 def test_render_markdown_shows_registry_data(tmp_path: Path) -> None:
     parsed = parse_session(SESSION_WITH_COPY)
     cache = tmp_path / "cache.json"
-    cache.write_text(json.dumps({"123": {"name": "Test (API)", "difficulty": "Easy Demon", "stars": 10, "author": "Tau"}}), encoding="utf-8")
+    cache.write_text(json.dumps({"123": {"name": "Test (API)", "difficulty": "Easy Demon", "stars": 10, "author": "Tau", "length": "Long", "songName": "Song", "songAuthor": "Artist"}}), encoding="utf-8")
     client = LevelClient(cache_path=cache, offline=True)
     enriched = enrich_session(parsed, client)
     md = render_markdown(enriched)
-    assert "Easy Demon" in md
-    assert "Tau" in md
+    # Título de diário: nome (dificuldade · estrelas) — por autor.
+    assert "**Test (API)** (Easy Demon · 10★) — por Tau" in md
+    assert "Length: Long | Música: Song por Artist" in md
 
 
 def test_render_markdown_warns_when_api_error(tmp_path: Path) -> None:
@@ -92,7 +128,7 @@ def test_render_markdown_warns_when_api_error(tmp_path: Path) -> None:
     client = LevelClient(cache_path=cache, offline=True)
     enriched = enrich_session(parsed, client)
     md = render_markdown(enriched)
-    assert "⚠️ Sem registro na API (http_500)" in md
+    assert "⚠️ sem registro na API" in md
     assert "Dificuldade: **?**" not in md
 
 

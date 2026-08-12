@@ -125,14 +125,57 @@ class LevelClient:
 class EnrichedSession:
     session_id: str
     digest: str
+    stats: dict[str, Any]
     levels: list[dict[str, Any]]
+
+
+def _session_stats(events: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Agrega métricas da sessão a partir dos eventos (sem inferir causa)."""
+    started = next(event for event in events if event["event_type"] == "session_started")
+    level = started.get("level") or {}
+    attempts = sum(1 for event in events if event["event_type"] == "attempt_started")
+    deaths = sum(
+        1 for event in events
+        if event["event_type"] == "attempt_ended" and event.get("outcome") == "death"
+    )
+    training = sum(
+        1 for event in events
+        if event["event_type"] == "attempt_started" and event.get("training_segment")
+    )
+    if events:
+        duration_seconds = events[-1]["monotonic_seconds"] - events[0]["monotonic_seconds"]
+    else:
+        duration_seconds = 0.0
+    return {
+        "local_date": started.get("local_date"),
+        "timestamp_ms": started.get("timestamp_ms"),
+        "level_name": level.get("name"),
+        "level_id": level.get("id"),
+        "stars": level.get("stars"),
+        "is_demon": level.get("is_demon"),
+        "attempts": attempts,
+        "deaths": deaths,
+        "training_segments": training,
+        "duration_seconds": round(duration_seconds, 1),
+    }
+
+
+def _death_tracker(event: dict[str, Any]) -> dict[str, Any]:
+    """Copia os campos úteis do death_tracker_snapshot (fonte: Death Tracker)."""
+    return {
+        key: event.get(key)
+        for key in ("level_id", "level_name", "attempts", "new_best_percent",
+                    "real_end_percent", "difficulty")
+    }
 
 
 def enrich_session(session: ParsedSession, client: LevelClient) -> EnrichedSession:
     """Monta o resumo: observado (telemetria) + registry (API) por fase."""
+    stats = _session_stats(session.events)
     levels: list[dict[str, Any]] = []
     for level_id in extract_level_ids(session.events):
         observed: dict[str, Any] = {"id": level_id}
+        death_tracker: dict[str, Any] | None = None
         # Preenche observado com o primeiro nome/criador que o mod registrou.
         for event in session.events:
             if event["event_type"] == "session_started":
@@ -145,53 +188,97 @@ def enrich_session(session: ParsedSession, client: LevelClient) -> EnrichedSessi
                 if event.get("copy_level_id") == level_id:
                     observed.setdefault("training_copies", 0)
                     observed["training_copies"] += 1
+            elif event["event_type"] == "death_tracker_snapshot":
+                if event.get("level_id") == level_id:
+                    death_tracker = _death_tracker(event)
 
         registry = client.level(level_id)
-        levels.append({"observed": observed, "registry": registry})
+        levels.append({"observed": observed, "registry": registry, "death_tracker": death_tracker})
 
-    return EnrichedSession(session.session_id, session.digest, levels)
+    return EnrichedSession(session.session_id, session.digest, stats, levels)
 
 
 # --- Renderização -----------------------------------------------------------
 
+def _format_duration(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    remaining = int(seconds % 60)
+    if minutes >= 60:
+        hours = minutes // 60
+        minutes %= 60
+        return f"{hours}h{minutes:02d}min"
+    if minutes:
+        return f"{minutes}min"
+    return f"{remaining}s"
+
+
 def render_markdown(enriched: EnrichedSession, source_name: str = "") -> str:
-    """Gera o bloco de sessão pronto para o diário no Obsidian."""
+    """Gera a entrada de diário de sessão, pronta para o Obsidian."""
     lines: list[str] = []
-    lines.append("### Sessão enriquecida")
+    stats = enriched.stats
+
+    date = stats.get("local_date") or "sem data"
+    lines.append(f"### Sessão — {date}")
     if source_name:
-        lines.append(f"- Fonte: `{source_name}`")
-    lines.append(f"- Sessão: `{enriched.session_id}`")
+        lines.append(f"- Fonte: `{source_name}` | Sessão: `{enriched.session_id}`")
+    else:
+        lines.append(f"- Sessão: `{enriched.session_id}`")
+    duration = _format_duration(stats.get("duration_seconds", 0))
+    summary = [f"Duração: {duration}", f"{stats.get('attempts', 0)} tentativas"]
+    if stats.get("deaths"):
+        summary.append(f"{stats['deaths']} mortes")
+    if stats.get("training_segments"):
+        summary.append(f"{stats['training_segments']} treino(s) de SP")
+    lines.append(f"- {' · '.join(summary)}")
 
     for level in enriched.levels:
         observed = level["observed"]
         registry = level["registry"]
+        death_tracker = level.get("death_tracker")
         name = registry.get("name") or observed.get("name") or f"ID {observed['id']}"
         lines.append("")
-        lines.append(f"**{name}** — `{observed['id']}`")
-        if observed.get("name") and observed.get("name") != registry.get("name"):
-            lines.append(f"- Nome no jogo: {observed['name']}")
+
+        # Título: nome + dificuldade/estrelas quando a API confirma.
         if registry.get("error"):
-            lines.append(f"- ⚠️ Sem registro na API ({registry['error']}) — fase local/cópia não encontrada")
+            title = f"**{name}** — `{observed['id']}` ⚠️ sem registro na API"
         elif registry:
             diff = registry.get("difficulty", "?")
-            stars = registry.get("stars", "?")
-            author = registry.get("author", "?")
-            lines.append(f"- Dificuldade: **{diff}** | Estrelas: {stars} | Criador: {author}")
-            length = registry.get("length", "?")
-            lines.append(f"- Length: {length} | Coins: {registry.get('coins', '?')} | "
-                         f"Música: {registry.get('songName', '?')} por {registry.get('songAuthor', '?')}")
-            if registry.get("featured") or registry.get("epic"):
-                flags = [flag for flag, value in (("featured", registry.get("featured")), ("epic", registry.get("epic"))) if value]
-                lines.append(f"- Flags: {', '.join(flags)}")
-            if registry.get("downloads") is not None:
-                lines.append(f"- Downloads: {registry['downloads']:,} | Likes: {registry.get('likes', 0):,}".replace(",", "."))
-            lines.append(f"- Link: https://gdbrowser.com/level/{observed['id']}")
+            stars = registry.get("stars")
+            stars_text = f" · {stars}★" if stars is not None else ""
+            title = f"**{name}** ({diff}{stars_text}) — por {registry.get('author', '?')}"
         else:
+            title = f"**{name}** — `{observed['id']}`"
+        lines.append(title)
+
+        if observed.get("name") and registry.get("name") and observed["name"] != registry["name"]:
+            lines.append(f"- Nome no jogo: {observed['name']}")
+
+        # Melhor marca / tentativas vêm do Death Tracker (fonte confiável).
+        if death_tracker and death_tracker.get("new_best_percent") is not None:
+            best = death_tracker["new_best_percent"]
+            dt_attempts = death_tracker.get("attempts")
+            attempts_text = f", {dt_attempts} tentativas" if dt_attempts is not None else ""
+            lines.append(f"- Melhor marca: **{best}%**{attempts_text}")
+        elif registry.get("error"):
+            lines.append(f"- ⚠️ Sem registro na API ({registry['error']}) — fase local/cópia não encontrada")
+        elif not registry:
             lines.append("- ⚠️ Sem registro na API (fase local/cópia não encontrada ou offline)")
+
         if observed.get("training_copies"):
             copies = observed["training_copies"]
-            lines.append(f"- Treino: {copies} trecho(s) com start position (cópia) — vínculo oficial "
+            lines.append(f"- Treino: {copies} trecho(s) com start position — vínculo oficial "
                          "permanece `needs_confirmation`")
+
+        if registry and not registry.get("error"):
+            length = registry.get("length", "?")
+            song = registry.get("songName", "?")
+            song_author = registry.get("songAuthor", "?")
+            music = f"{song} por {song_author}" if song_author != "?" else song
+            lines.append(f"- Length: {length} | Música: {music}")
+            if registry.get("coins"):
+                lines.append(f"- Coins: {registry['coins']}")
+            lines.append(f"- Link: https://gdbrowser.com/level/{observed['id']}")
+
     return "\n".join(lines)
 
 

@@ -122,13 +122,36 @@ misturado com a telemetria.
 ### Como o esboço funciona
 
 1. `parse_session` valida o JSONL (mesmo contrato do hub).
-2. `extract_level_ids` coleta IDs únicos do `session_started.level.id` e de
+2. `_session_stats` agrega métricas da sessão: `local_date`, tentativas, mortes,
+   treinos de SP e duração (sem inferir causa).
+3. `extract_level_ids` coleta IDs únicos do `session_started.level.id` e de
    `copy_level_link.copy_level_id`; IDs `0` (fase sem ID oficial) são ignorados.
-3. `LevelClient` consulta `api/level/<id>` com **cache em disco**
+4. `LevelClient` consulta `api/level/<id>` com **cache em disco**
    (`enrich-cache.json`), intervalo mínimo entre requisições e modo `--offline`
    que nunca toca a rede.
-4. `render_markdown` gera o bloco pronto para o diário do Obsidian; `--out`
-   também grava o JSON estruturado.
+5. `render_markdown` gera uma **entrada de diário** pronta para o Obsidian;
+   `--out` também grava o JSON estruturado.
+
+### Saída de exemplo
+
+```markdown
+### Sessão — 2026-08-12
+- Fonte: `sample-live-enrich.jsonl` | Sessão: `session-live-test`
+- Duração: 20s · 2 tentativas · 1 mortes · 1 treino(s) de SP
+
+**Bloodbath** (Extreme Demon · 10★) — por Riot
+- Melhor marca: **47%**, 231 tentativas
+- Length: Long | Música: At the Speed of Light por Dimrain47
+- Link: https://gdbrowser.com/level/10565740
+
+**ID 999999999** — `999999999` ⚠️ sem registro na API
+- ⚠️ Sem registro na API (http_500) — fase local/cópia não encontrada
+- Treino: 1 trecho(s) com start position — vínculo oficial permanece `needs_confirmation`
+```
+
+A **melhor marca** e as tentativas vêm do `death_tracker_snapshot` (fonte
+read-only do Death Tracker), não da API — a API só adiciona o contexto oficial
+da fase (dificuldade, estrelas, criador, música).
 
 ### Uso
 
