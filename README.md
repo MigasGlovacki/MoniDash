@@ -1,100 +1,99 @@
 # MoniDash
 
-MoniDash is a local-first Geometry Dash telemetry mod intended to complement,
-not replace, the existing Death Tracker mod.
+Mod Geode local para coletar telemetria de Geometry Dash 2.2081 para análise
+posterior conduzida por um companheiro de IA. O contrato JSONL permanece
+append-only: uma linha JSON por evento. `session_started` abre a sessão e uma
+única linha final `session_ended` a fecha. O mod continua offline; a
+sincronização é feita fora dele por um relay separado.
 
-**Status:** The narrow MoniDash MVP flow has been validated in the real Windows
-runtime. A normal Geometry Dash exit produced a complete manifest, one
-`session_ended` event, and the sequence `session_started` ->
-`level_started(level_id 1)` -> `death(level_id 1)` -> `session_ended`. It also
-produced `death_tracker_snapshot/1-local/{metadata,general.dt}`; SHA-256 copies
-exactly matched the current Death Tracker sources. This validates the observed
-single-player flow only, not all level types, duplicate or dual-player cases,
-death causes, richer telemetry, analysis, networking, or PR merge status.
+**Status:** o MVP narrow v0.1.0 (sessões em pasta com manifest + snapshot do
+Death Tracker) foi validado no Windows. O v0.2.0 substitui esse contrato pela
+telemetria rica (schema 2.0.0) e adiciona o pipeline privado relay → hub.
 
-## Why two data sources?
+## Eventos do mod
 
-Death Tracker is the read-only macro source. It provides deaths grouped by
-percentage, level metadata, and session aggregates.
+- `session_started` e `session_ended`: limite de uma sessão e metadados conhecidos do nível.
+- `attempt_started` e `attempt_ended`: tentativa, intervalo espacial e resultado.
+- `gameplay_event`: input, interação com objeto ou mudança observável do estado do jogador.
+- `death_context`: snapshot fatal (incluindo modo, mini, mirror, gravidade e velocidade) mais os cinco segundos precedentes de eventos.
+- `copy_level_link`: começa como `needs_confirmation`; o mod não adivinha vínculo oficial.
+- `reference_run_saved`: referência de treino ativa para uma cópia.
 
-MoniDash is intended to provide micro-context for each death when that context
-is reliably observable: game mode, mini state, gravity or reverse state, speed,
-raw X position, a compatible percentage bin, and recent inputs or events.
-Keeping these roles separate lets MoniDash add context without changing or
-duplicating Death Tracker's records.
+Campos factuais permanecem separados de inferências; classificações desconhecidas ficam `unknown`.
+
+## Por que dois dados?
+
+Death Tracker continua sendo a fonte macro (mortes agrupadas por percentual).
+MoniDash fornece o micro-contexto de cada morte: modo, mini, espelhamento,
+velocidade, posição, objeto fatal e os eventos precedentes. Os papéis são
+separados: MoniDash não modifica nem duplica os registros do Death Tracker.
 
 ## Local-first privacy
 
-The design is local-first:
+- Não há upload de telemetria feito pelo mod; ele permanece offline.
+- O relay só envia sessões finalizadas (`session_ended`) e nunca altera os JSONLs fonte.
+- O hub é privado e valida estritamente cada sessão antes de indexá-la.
 
-- There is no network upload of telemetry.
-- MoniDash will not modify Death Tracker files.
-- Session data stays on the player's machine.
+## Build do mod
 
-Any future integration with local data will be read-only with respect to Death
-Tracker's files. This repository does not yet contain a collector, relay, hub,
-or other networking component.
+1. Instale Geode SDK/binários (`geode sdk install` e `geode sdk install-binaries`).
+2. Execute `geode build` no diretório do projeto.
 
-## Companion-led analysis
+O pacote esperado é `build-ninja\migas.monidash.geode`.
 
-A future companion will analyze local records rather than having the mod
-declare what caused a death. Analysis should be presented as hypotheses with
-uncertainty, for example: "This attempt may be consistent with a timing issue
-near the speed change" or "The available context is insufficient to infer a
-cause." It must not pretend to diagnose the player, invent causes, or turn
-limited telemetry into automatic verdicts.
+## Sync MVP (relay → hub)
 
-## Initial non-goals
+O hub Python aceita somente JSONL UTF-8 completo e estrito: cada linha precisa ter
+`schema_version`, `event_type`, `timestamp_ms` e `monotonic_seconds`; exatamente
+um `session_started`; exatamente um `session_ended` como evento final; e IDs de
+sessão coerentes. Ele grava bytes originais uma vez em `raw/<sha256>.jsonl` e
+indexa resumos em SQLite transacionalmente. Reenvios do mesmo SHA-256 são
+idempotentes.
 
-The initial project does not aim to provide:
+### Hub privado
 
-- Gameplay alteration or cheats
-- Cloud telemetry
-- Automatic diagnosis
-- A replacement for Death Tracker
-
-## Build
-
-Core-only mode works on Linux without the Geode SDK:
+Copie `services/.env.example` para um arquivo de ambiente local e preencha um
+token real fora do Git. Para desenvolvimento:
 
 ```sh
-cmake -S . -B build/core
-cmake --build build/core
-ctest --test-dir build/core --output-on-failure
+cd services
+uv run --with-requirements requirements.txt uvicorn monidash_hub.api:create_app --factory --host 127.0.0.1 --port 8787
 ```
 
-Windows Geode package mode requires the Geode SDK source and CLI paths to be
-provided explicitly. Replace both placeholders with paths on the build PC:
+`POST /v1/sessions` requer `Authorization: Bearer <token>` e
+`Content-Type: application/x-ndjson` ou `application/jsonl`. `GET /healthz` não
+requer autenticação. O binding padrão é loopback; publicação por proxy/VPN é
+decisão de deploy.
+
+### Relay Windows
+
+Configure variáveis de `relay/.env.example` localmente e execute
+`python relay/monidash_relay.py`. O relay usa polling, só envia um arquivo cujo
+último evento é `session_ended`, nunca altera os JSONLs fonte e guarda somente
+SHA-256 reconhecidos em seu estado local. Erros transitórios (rede, 5xx, 408/429)
+não marcam o arquivo como reconhecido; rejeições permanentes 4xx são registradas
+como `rejected`.
+
+### MCP local read-only
+
+O servidor MCP stdio fala JSON-RPC 2.0 e oferece `latest_session`,
+`session_summary`, `death_clusters`, `reference_runs` e `death_context`; não tem
+ferramentas de mutação nem expõe caminhos de arquivos. Execute no VPS com
+`PYTHONPATH=services python -m monidash_hub.mcp_server` e o mesmo ambiente de
+dados do hub.
+
+## Testes
 
 ```sh
-cmake -S . -B build/geode \
-  -DMONIDASH_BUILD_GEODE_MOD=ON \
-  -DMONIDASH_GEODE_SDK=<path-to-geode-sdk-5.8.2> \
-  -DGEODE_CLI=<path-to-geode-cli-3.8.0>
-cmake --build build/geode --config Release
+UV_CACHE_DIR=/tmp/monidash-uv-cache uv run --with-requirements services/requirements.txt pytest services/tests relay/tests -q
 ```
 
-The narrow Windows MVP flow has been runtime-validated: packaging, manifest
-completion on a normal exit, the session/event sequence described above, and
-the Death Tracker snapshot files are present and source-matched by SHA-256.
-This is not a claim of generality across all level types or duplicate/dual-player
-cases, and does not include causes, richer telemetry, analysis, networking, or
-PR merge status.
+As fixtures `tests/fixtures/*.jsonl` contêm sessões finalizadas válidas e podem
+ser validadas no Windows com `tests/validate-jsonl.ps1`.
 
 ## Distribution and updates
 
-MoniDash v1.0 will not be published to the Geode Index and will not offer
-automated GitHub-based updates. GitHub remains the project's source-control and
-review platform. During development and testing, builds, installs, and updates
-will be coordinated manually. This repository does not claim a public release.
-
-## Project scope
-
-The current runtime has a narrow, Windows-validated MVP flow: a normal exit
-produces a complete manifest with one `session_ended` event, the sequence
-`session_started` -> `level_started(level_id 1)` -> `death(level_id 1)` ->
-`session_ended`, and a read-only snapshot at
-`death_tracker_snapshot/1-local/{metadata,general.dt}` whose SHA-256 copies
-match the current Death Tracker sources. This scope does not claim coverage of
-all level types, duplicate or dual-player cases, death causes, richer telemetry,
-analysis, networking, or PR merge status.
+MoniDash não será publicado no Geode Index e não oferecerá atualizações
+automáticas baseadas em GitHub. GitHub permanece como plataforma de
+source-control e revisão. Builds, instalações e atualizações são coordenados
+manualmente.

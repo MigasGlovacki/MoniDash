@@ -1,0 +1,139 @@
+import json
+from pathlib import Path
+
+import pytest
+from monidash_hub.telemetry import TelemetryValidationError, parse_session, store_raw
+
+FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "sample-session.jsonl"
+
+
+def test_valid_completed_fixture_parses_and_has_digest():
+    session = parse_session(FIXTURE.read_bytes())
+
+    assert session.session_id == "session-test"
+    assert len(session.events) == 7
+    assert len(session.digest) == 64
+
+
+@pytest.mark.parametrize(
+    ("event", "message"),
+    [
+        ({"schema_version": "2", "event_type": "session_started", "timestamp_ms": "1", "monotonic_seconds": 0, "session_id": "x"}, "schema_version"),
+        ({"schema_version": "2.0.0", "event_type": "invented", "timestamp_ms": "1", "monotonic_seconds": 0}, "unknown event_type"),
+        ({"schema_version": "2.0.0", "event_type": "session_started", "timestamp_ms": 1, "monotonic_seconds": 0, "session_id": "x"}, "timestamp_ms"),
+        ({"schema_version": "2.0.0", "event_type": "session_started", "timestamp_ms": "1", "monotonic_seconds": float("nan"), "session_id": "x"}, "monotonic_seconds"),
+    ],
+)
+def test_rejects_wrong_schema_unknown_event_and_invalid_time_types(event, message):
+    payload = (json.dumps(event, allow_nan=True) + "\n").encode()
+    with pytest.raises(TelemetryValidationError, match=message):
+        parse_session(payload)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b'{"schema_version":"2.0.0","event_type":"session_started"}\n', "missing required fields"),
+        (b"not json\n", "invalid JSON"),
+        (b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1","monotonic_seconds":0,"session_id":"x"}\n', "session_ended"),
+    ],
+)
+def test_rejects_invalid_jsonl(payload, message):
+    with pytest.raises(TelemetryValidationError, match=message):
+        parse_session(payload)
+
+
+def test_requires_exactly_one_started_and_final_ended():
+    base = b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1","monotonic_seconds":0,"session_id":"x"}\n'
+    ended = b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"2","monotonic_seconds":1,"session_id":"x"}\n'
+
+    with pytest.raises(TelemetryValidationError, match="exactly one session_started"):
+        parse_session(base + base + ended)
+    with pytest.raises(TelemetryValidationError, match="unknown event_type"):
+        parse_session(base + ended + b'{"schema_version":"2.0.0","event_type":"input","timestamp_ms":"3","monotonic_seconds":2}\n')
+
+
+def test_rejects_mismatched_session_ids():
+    payload = (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1","monotonic_seconds":0,"session_id":"a"}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"2","monotonic_seconds":1,"session_id":"b"}\n'
+    )
+    with pytest.raises(TelemetryValidationError, match="session IDs"):
+        parse_session(payload)
+
+
+def _session_with(event_line: bytes) -> bytes:
+    return (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1","monotonic_seconds":0,"session_id":"x"}\n'
+        + event_line
+        + b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"2","monotonic_seconds":1,"session_id":"x"}\n'
+    )
+
+
+def test_attempt_events_require_non_empty_attempt_id():
+    started = b'{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"1","monotonic_seconds":0.1}\n'
+    ended = b'{"schema_version":"2.0.0","event_type":"attempt_ended","timestamp_ms":"2","monotonic_seconds":0.2}\n'
+    empty = b'{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"1","monotonic_seconds":0.1,"attempt_id":""}\n'
+
+    with pytest.raises(TelemetryValidationError, match="attempt_started requires attempt_id"):
+        parse_session(_session_with(started))
+    with pytest.raises(TelemetryValidationError, match="attempt_ended requires attempt_id"):
+        parse_session(_session_with(ended))
+    with pytest.raises(TelemetryValidationError, match="attempt_id"):
+        parse_session(_session_with(empty))
+
+
+def test_attempt_id_must_be_a_string():
+    numeric = b'{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"1","monotonic_seconds":0.1,"attempt_id":3}\n'
+    with pytest.raises(TelemetryValidationError, match="attempt_id must be a string"):
+        parse_session(_session_with(numeric))
+
+
+@pytest.mark.parametrize(
+    ("middle", "message"),
+    [
+        ('{"schema_version":"2.0.0","event_type":"attempt_ended","timestamp_ms":"1","monotonic_seconds":0.1,"attempt_id":"a","outcome":"death","start_x":0,"end_x":1,"training_segment":false}', "not active"),
+        ('{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"1","monotonic_seconds":0.1,"attempt_id":"a","attempt_number":1,"training_segment":false,"start_x":0}\n{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"2","monotonic_seconds":0.2,"attempt_id":"b","attempt_number":2,"training_segment":false,"start_x":0}', "already active"),
+        ('{"schema_version":"2.0.0","event_type":"gameplay_event","timestamp_ms":"1","monotonic_seconds":0.1,"attempt_id":"missing","event":{"event_type":"input","at":0.1,"button":1,"player":1,"pressed":true}}', "not active"),
+    ],
+)
+def test_attempt_references_follow_a_single_active_attempt(middle, message):
+    payload = (
+        '{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"0","monotonic_seconds":0,"session_id":"x"}\n'
+        + middle
+        + '\n{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"3","monotonic_seconds":1,"session_id":"x"}\n'
+    ).encode()
+    with pytest.raises(TelemetryValidationError, match=message):
+        parse_session(payload)
+
+
+def test_rejects_monotonic_time_regression_and_missing_event_specific_fields():
+    regression = (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"0","monotonic_seconds":1,"session_id":"x"}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"1","monotonic_seconds":0,"session_id":"x"}\n'
+    )
+    missing_event = (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"0","monotonic_seconds":0,"session_id":"x"}\n'
+        b'{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"1","monotonic_seconds":0.1,"attempt_id":"a","attempt_number":1,"training_segment":false,"start_x":0}\n'
+        b'{"schema_version":"2.0.0","event_type":"gameplay_event","timestamp_ms":"2","monotonic_seconds":0.2,"attempt_id":"a","event":{"event_type":"input"}}\n'
+        b'{"schema_version":"2.0.0","event_type":"attempt_ended","timestamp_ms":"3","monotonic_seconds":0.3,"attempt_id":"a","outcome":"death","start_x":0,"end_x":1,"training_segment":false}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"4","monotonic_seconds":0.4,"session_id":"x"}\n'
+    )
+    with pytest.raises(TelemetryValidationError, match="nondecreasing"):
+        parse_session(regression)
+    with pytest.raises(TelemetryValidationError, match="gameplay_event"):
+        parse_session(missing_event)
+
+
+def test_raw_storage_is_digest_named_and_never_overwrites(tmp_path):
+    payload = FIXTURE.read_bytes()
+    session = parse_session(payload)
+
+    path, created = store_raw(tmp_path, session)
+    again, created_again = store_raw(tmp_path, session)
+
+    assert path == again
+    assert path.name == f"{session.digest}.jsonl"
+    assert path.read_bytes() == payload
+    assert created is True
+    assert created_again is False
