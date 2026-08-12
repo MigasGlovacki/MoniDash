@@ -12,7 +12,7 @@ telemetria rica (schema 2.0.0) e adiciona o pipeline privado relay → hub.
 
 ## Eventos do mod
 
-- `session_started` e `session_ended`: limite de uma sessão e metadados conhecidos do nível (incluindo `local_date`, `stars`, `is_demon`, `demon_difficulty` e `mirror_mode`).
+- `session_started` e `session_ended`: limite de uma sessão e metadados conhecidos do nível (incluindo `local_date`, `stars`, `is_demon` e `mirror_mode`). A dificuldade exata do demon (Easy/Medium/Hard/Insane/Extreme) não é lida do nível no início da sessão — o campo não é populado de forma confiável — e é determinada na análise por fonte verificável.
 - `attempt_started` e `attempt_ended`: tentativa, intervalo espacial e resultado.
 - `gameplay_event`: input, interação com objeto ou mudança observável do estado do jogador.
 - `death_context`: snapshot fatal (incluindo modo, mini, mirror, gravidade e velocidade) mais os cinco segundos precedentes de eventos.

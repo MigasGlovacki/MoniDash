@@ -146,7 +146,6 @@ public:
         const bool mirrorMode = settings && settings->m_mirrorMode;
         const bool isDemon = level && static_cast<int>(level->m_demon) != 0;
         const int stars = level ? static_cast<int>(level->m_stars) : 0;
-        const int demonDifficulty = isDemon ? level->m_demonDifficulty : -1;
         write("session_started", "\"session_id\":" + jsonString(m_sessionId) +
             ",\"local_date\":" + jsonString(localDate()) +
             ",\"level\":{\"id\":" + std::to_string(level ? static_cast<int>(level->m_levelID) : 0) +
@@ -156,7 +155,6 @@ public:
             ",\"extent_x\":" + number(layer->m_endXPosition) +
             ",\"stars\":" + std::to_string(stars) +
             ",\"is_demon\":" + std::string(isDemon ? "true" : "false") +
-            ",\"demon_difficulty\":" + std::to_string(demonDifficulty) +
             ",\"local_or_saved\":" + std::string(level && level->m_localOrSaved ? "true" : "false") +
             ",\"platformer\":" + std::string(level && level->isPlatformer() ? "true" : "false") +
             ",\"mirror_mode\":" + std::string(mirrorMode ? "true" : "false") + "}");

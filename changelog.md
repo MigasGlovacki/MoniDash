@@ -12,8 +12,8 @@
 - Adiciona o ajuste `capture-enabled` e o índice `telemetry/active-references/`.
 - Adiciona filtro de dificuldade configurável no menu do Geode (`Apenas Demons`
   e `Mínimo 9 estrelas`); fases fora do filtro não geram arquivo local.
-- `session_started` agora carrega `local_date`, `stars`, `is_demon` e
-  `demon_difficulty`; o hub organiza as sessões em `sessions/<data>/<fase>/`.
+- `session_started` agora carrega `local_date`, `stars` e `is_demon`;
+  o hub organiza as sessões em `sessions/<data>/<fase>/`.
 - O pacote continua sendo `migas.monidash` (v0.2.0), atualizando o mod
   instalado em vez de criar um mod paralelo.
 
