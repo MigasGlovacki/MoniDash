@@ -1,6 +1,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/PlayerObject.hpp>
 
 #include <chrono>
 #include <deque>
@@ -129,6 +130,8 @@ public:
         finishAttempt("reset", nullptr);
         ++m_attemptCounter;
         m_attempt = {};
+        m_lastFatalPlayer = nullptr;
+        m_lastFatalObject = nullptr;
         m_attempt.number = m_attemptCounter;
         m_attempt.id = m_sessionId + "-attempt-" + std::to_string(m_attemptCounter);
         auto* startPos = m_playLayer->m_startPosObject;
@@ -170,8 +173,9 @@ public:
         }
     }
 
-    void death(PlayerObject* player, GameObject* object) {
-        if (!owns(player) || m_attempt.id.empty()) return;
+    void death(PlayerObject* player) {
+        if (!owns(player) || m_attempt.id.empty() || m_attempt.finished) return;
+        auto* object = (m_lastFatalPlayer == player) ? m_lastFatalObject : nullptr;
         std::ostringstream context;
         context << "[";
         bool first = true;
@@ -190,6 +194,16 @@ public:
             ",\"confidence\":" + jsonString(object ? (objectClass(object) == "unknown" ? "low" : "medium") : "none") + "}" +
             ",\"context_seconds\":5,\"preceding_events\":" + context.str());
         finishAttempt("death", player);
+    }
+
+    // O GD 2.2081 chama PlayLayer::destroyPlayer repetidamente durante o ciclo
+    // de spawn/respawn (com o chão como objeto), então destroyPlayer não é um
+    // gatilho confiável de morte. Aqui ele apenas registra o candidato a objeto
+    // fatal; a morte real é sinalizada uma única vez por PlayerObject::playerDestroyed.
+    void noteDestroyPlayer(PlayerObject* player, GameObject* object) {
+        if (!owns(player)) return;
+        m_lastFatalPlayer = player;
+        m_lastFatalObject = object;
     }
 
     void complete() {
@@ -227,6 +241,8 @@ private:
     std::ofstream m_output;
     std::deque<ContextEvent> m_context;
     Attempt m_attempt;
+    PlayerObject* m_lastFatalPlayer = nullptr;
+    GameObject* m_lastFatalObject = nullptr;
     std::string m_sessionId;
     std::string m_lastState;
     std::filesystem::path m_telemetryDir;
@@ -362,12 +378,19 @@ class $modify(MoniDashPlayLayer, PlayLayer) {
         monidash::Recorder::get().sample();
     }
     void destroyPlayer(PlayerObject* player, GameObject* object) {
-        monidash::Recorder::get().death(player, object);
+        monidash::Recorder::get().noteDestroyPlayer(player, object);
         PlayLayer::destroyPlayer(player, object);
     }
     void levelComplete() {
         monidash::Recorder::get().complete();
         PlayLayer::levelComplete();
+    }
+};
+
+class $modify(MoniDashPlayerObject, PlayerObject) {
+    void playerDestroyed(bool noEffects) {
+        monidash::Recorder::get().death(this);
+        PlayerObject::playerDestroyed(noEffects);
     }
 };
 
