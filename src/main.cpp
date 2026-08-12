@@ -284,7 +284,7 @@ private:
         if (!m_output.is_open()) return;
         m_output << "{\"schema_version\":" << jsonString(kSchemaVersion)
                  << ",\"event_type\":" << jsonString(type)
-                 << ",\"timestamp_ms\":" << unixMillis()
+                 << ",\"timestamp_ms\":" << jsonString(unixMillis())
                  << ",\"monotonic_seconds\":" << number(elapsed()) << "," << body << "}\n";
         m_output.flush();
     }
