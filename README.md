@@ -98,6 +98,62 @@ ferramentas de mutação nem expõe caminhos de arquivos. Execute no VPS com
 `PYTHONPATH=services python -m monidash_hub.mcp_server` e o mesmo ambiente de
 dados do hub.
 
+## Enriquecimento de fases (esboço)
+
+`services/monidash_hub/enrich.py` enriquece uma sessão validada com metadados
+oficiais das fases usando a API pública do **GDBrowser**
+(`https://gdbrowser.com/api`). A saída separa sempre o que o mod observou
+(`observed`) do que a API informou (`registry`) — nenhum dado externo é
+misturado com a telemetria.
+
+### O que a API oferece (validado ao vivo)
+
+- `GET /api/level/<id>` — detalhe completo da fase: nome oficial, criador,
+  dificuldade (`Easy Demon`, `Extreme Demon`, etc.), estrelas, length, coins,
+  música, featured/epic, downloads/likes. **Funciona de forma confiável.**
+- `GET /api/search/<nome>?type=search` — busca textual por nome. **Degradada no
+  momento**: retorna a mesma lista fixa independente da query; não dependa dela.
+- Rate limit: `150` requisições/hora por IP (headers `x-ratelimit-*`); CORS
+  aberto (`*`); JSON puro.
+- O autor avisa que a API é "slow, unreliable" e pode ser **removida no
+  futuro** — por isso o cache em disco e o modo offline são parte do esboço,
+  não enfeite.
+
+### Como o esboço funciona
+
+1. `parse_session` valida o JSONL (mesmo contrato do hub).
+2. `extract_level_ids` coleta IDs únicos do `session_started.level.id` e de
+   `copy_level_link.copy_level_id`; IDs `0` (fase sem ID oficial) são ignorados.
+3. `LevelClient` consulta `api/level/<id>` com **cache em disco**
+   (`enrich-cache.json`), intervalo mínimo entre requisições e modo `--offline`
+   que nunca toca a rede.
+4. `render_markdown` gera o bloco pronto para o diário do Obsidian; `--out`
+   também grava o JSON estruturado.
+
+### Uso
+
+```sh
+PYTHONPATH=services python -m monidash_hub.enrich <sessao.jsonl> --out <dir> [--offline] [--refresh] [--cache <path>]
+```
+
+- `--offline`: usa apenas o cache (útil quando a API estiver fora).
+- `--refresh`: ignora o cache e re-consulta.
+- `--cache`: caminho do cache (padrão `enrich-cache.json` no diretório atual).
+
+### Comportamentos de borda
+
+- Fase inexistente / erro HTTP → a API devolve `-1` ou 5xx; o esboço grava
+  `{"error": ...}` no cache e o Markdown mostra `⚠️ Sem registro na API` em vez
+  de inventar dificuldade.
+- Trecho de treino (`copy_level_link`) → contado como `training_copies` no
+  bloco `observed`; o vínculo com a fase oficial permanece `needs_confirmation`,
+  nunca é promovido pelo enricher.
+- Fase local/salva com ID fora do servidor → aviso, com os dados observados
+  preservados.
+
+Testes em `services/tests/test_enrich.py` (offline, sem rede) + fixture ao vivo
+`tests/fixtures/sample-live-enrich.jsonl` para smoke test manual.
+
 ## Testes
 
 ```sh
