@@ -14,6 +14,14 @@
   e `Mínimo 9 estrelas`); fases fora do filtro não geram arquivo local.
 - `session_started` agora carrega `local_date`, `stars` e `is_demon`;
   o hub organiza as sessões em `sessions/<data>/<fase>/`.
+- Cópias de treino (`Fase SP`/`Start Position`) são sempre capturadas e
+  agrupadas na pasta da fase oficial.
+- Novo evento `death_tracker_snapshot` no fim da sessão (leitura read-only do
+  Death Tracker: attempts, newBest, realEndPercent, difficulty, general.dt).
+- Classificação de mortes ampliada: objetos desconhecidos ganham tipo do GD
+  (hazard/block/slope) com confiança baixa; `object_type` cru fica no payload.
+- Hub com watchdog via cron (reinício automático se cair), independente da
+  sessão do Hermes.
 - O pacote continua sendo `migas.monidash` (v0.2.0), atualizando o mod
   instalado em vez de criar um mod paralelo.
 

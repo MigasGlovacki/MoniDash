@@ -32,6 +32,7 @@ class HubStore:
                 CREATE TABLE IF NOT EXISTS attempts (digest TEXT NOT NULL, attempt_id TEXT NOT NULL, outcome TEXT, start_x REAL, end_x REAL);
                 CREATE TABLE IF NOT EXISTS deaths (digest TEXT NOT NULL, attempt_id TEXT, monotonic_seconds REAL, classification TEXT, context_json TEXT);
                 CREATE TABLE IF NOT EXISTS references_run (digest TEXT NOT NULL, reference_id TEXT, attempt_id TEXT, start_x REAL, end_x REAL, link_status TEXT);
+                CREATE TABLE IF NOT EXISTS death_tracker_snapshots (digest TEXT NOT NULL, level_id INTEGER, level_name TEXT, attempts INTEGER, new_best_percent INTEGER, real_end_percent INTEGER, difficulty INTEGER, snapshot_json TEXT);
             """)
 
     def import_session(self, session: ParsedSession) -> bool:
@@ -60,6 +61,9 @@ class HubStore:
                     elif kind == "reference_run_saved":
                         segment = event.get("segment") or {}
                         db.execute("INSERT INTO references_run VALUES (?, ?, ?, ?, ?, ?)", (digest, event.get("reference_id"), event.get("attempt_id"), segment.get("start_x"), segment.get("end_x"), event.get("link_status")))
+                    elif kind == "death_tracker_snapshot":
+                        db.execute("INSERT INTO death_tracker_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                   (digest, event.get("level_id"), event.get("level_name"), event.get("attempts"), event.get("new_best_percent"), event.get("real_end_percent"), event.get("difficulty"), json.dumps(event)))
                 db.commit()
                 return True
             except Exception:
@@ -95,4 +99,9 @@ class HubStore:
     def death_context(self, digest: str, attempt_id: str | None = None) -> list[dict[str, Any]]:
         sql, args = "SELECT attempt_id, monotonic_seconds, classification, context_json FROM deaths WHERE digest=?", [digest]
         if attempt_id: sql += " AND attempt_id=?"; args.append(attempt_id)
+        with self._connect() as db: return [dict(row) for row in db.execute(sql, args)]
+
+    def death_tracker_snapshot(self, digest: str | None = None) -> list[dict[str, Any]]:
+        sql, args = "SELECT digest, level_id, level_name, attempts, new_best_percent, real_end_percent, difficulty, snapshot_json FROM death_tracker_snapshots", ()
+        if digest: sql += " WHERE digest=?"; args = (digest,)
         with self._connect() as db: return [dict(row) for row in db.execute(sql, args)]

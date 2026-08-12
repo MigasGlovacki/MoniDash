@@ -32,3 +32,24 @@ def test_failed_import_rolls_back_all_rows(tmp_path):
     with pytest.raises(KeyError):
         store.import_events(session.digest, session.session_id, session_events)
     assert store.latest_session() is None
+
+
+def test_death_tracker_snapshot_is_indexed_and_queryable(tmp_path):
+    store = HubStore(tmp_path / "hub.sqlite3")
+    raw = (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1","monotonic_seconds":0,"session_id":"x"}\n'
+        b'{"schema_version":"2.0.0","event_type":"death_tracker_snapshot","timestamp_ms":"2","monotonic_seconds":1,"session_id":"x","level_id":75603568,"level_name":"Tabasco","attempts":537,"new_best_percent":69,"real_end_percent":100,"difficulty":7}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"3","monotonic_seconds":2,"session_id":"x"}\n'
+    )
+    session = parse_session(raw)
+
+    assert store.import_session(session) is True
+    rows = store.death_tracker_snapshot(session.digest)
+
+    assert len(rows) == 1
+    assert rows[0]["level_id"] == 75603568
+    assert rows[0]["level_name"] == "Tabasco"
+    assert rows[0]["attempts"] == 537
+    assert rows[0]["new_best_percent"] == 69
+    assert rows[0]["real_end_percent"] == 100
+    assert rows[0]["difficulty"] == 7

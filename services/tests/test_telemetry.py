@@ -207,3 +207,29 @@ def test_training_copy_suffix_groups_with_official_level(tmp_path, raw_name, exp
 
     assert organized is not None
     assert organized.parent.name == expected_folder
+
+
+def _session_with_dt_snapshot() -> bytes:
+    return (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1","monotonic_seconds":0,"session_id":"x"}\n'
+        b'{"schema_version":"2.0.0","event_type":"death_tracker_snapshot","timestamp_ms":"2","monotonic_seconds":1,"session_id":"x","level_id":75603568,"level_name":"Tabasco","attempts":537,"new_best_percent":69,"real_end_percent":100,"difficulty":7}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"3","monotonic_seconds":2,"session_id":"x"}\n'
+    )
+
+
+def test_death_tracker_snapshot_event_parses_and_requires_fields():
+    session = parse_session(_session_with_dt_snapshot())
+    assert session.session_id == "x"
+    assert len(session.events) == 3
+
+    bad = _session_with_dt_snapshot().replace(
+        b'"level_id":75603568', b'"level_id":"75603568"'
+    )
+    with pytest.raises(TelemetryValidationError, match="death_tracker_snapshot has invalid fields"):
+        parse_session(bad)
+
+    missing = _session_with_dt_snapshot().replace(
+        b',"level_id":75603568,"level_name":"Tabasco"', b""
+    )
+    with pytest.raises(TelemetryValidationError, match="missing fields"):
+        parse_session(missing)

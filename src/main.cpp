@@ -84,6 +84,77 @@ bool hasTrainingSuffix(const std::string& name) {
     return false;
 }
 
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return {};
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return buffer.str();
+}
+
+// Minimal, deliberately conservative JSON number extraction ("key":N). Returns
+// -1 when absent; used only for the small Death Tracker metadata files.
+long long jsonNumber(const std::string& text, const std::string& key) {
+    auto pos = text.find("\"" + key + "\"");
+    if (pos == std::string::npos) return -1;
+    pos = text.find(':', pos);
+    if (pos == std::string::npos) return -1;
+    while (pos < text.size() && (std::isspace(text[pos]) || text[pos] == ':')) pos++;
+    if (pos < text.size() && text[pos] == '-') pos++;
+    long long value = 0;
+    bool any = false;
+    while (pos < text.size() && std::isdigit(text[pos])) {
+        value = value * 10 + (text[pos] - '0');
+        pos++;
+        any = true;
+    }
+    return any ? value : -1;
+}
+
+long long lastNewBest(const std::string& text) {
+    auto pos = text.find("\"newBests\"");
+    if (pos == std::string::npos) return -1;
+    pos = text.find('[', pos);
+    if (pos == std::string::npos) return -1;
+    long long last = -1;
+    while (pos < text.size() && text[pos] != ']') {
+        while (pos < text.size() && text[pos] != ']' && !std::isdigit(text[pos])) pos++;
+        if (pos >= text.size() || text[pos] == ']') break;
+        long long value = 0;
+        while (pos < text.size() && std::isdigit(text[pos])) {
+            value = value * 10 + (text[pos] - '0');
+            pos++;
+        }
+        last = value;
+    }
+    return last;
+}
+
+// Read-only Death Tracker snapshot: the mod never writes there. Returns the
+// JSON body for a death_tracker_snapshot event, or an empty string when the
+// level has no Death Tracker data (e.g. editor training copies with id 0).
+std::string deathTrackerSnapshot(int levelID, const std::string& levelName) {
+    if (levelID <= 0) return {};
+    auto levelDir = Mod::get()->getSaveDir().parent_path() / "elohmrow.death_tracker" / "levels" / std::to_string(levelID);
+    auto metadata = readFile(levelDir / "metadata");
+    auto general = readFile(levelDir / "general.dt");
+    if (metadata.empty() && general.empty()) return {};
+    auto attempts = jsonNumber(metadata, "attempts");
+    auto difficulty = jsonNumber(metadata, "difficulty");
+    auto realEnd = jsonNumber(metadata, "realEndPercent");
+    auto newBest = lastNewBest(general);
+    auto numberOrNull = [](long long value) {
+        return value >= 0 ? std::to_string(value) : "null";
+    };
+    return ",\"level_id\":" + std::to_string(levelID) +
+        ",\"level_name\":" + jsonString(levelName) +
+        ",\"attempts\":" + numberOrNull(attempts) +
+        ",\"new_best_percent\":" + numberOrNull(newBest) +
+        ",\"real_end_percent\":" + numberOrNull(realEnd) +
+        ",\"difficulty\":" + numberOrNull(difficulty) +
+        ",\"general_dt\":" + jsonString(general);
+}
+
 bool levelEligible(GJGameLevel* level) {
     if (!Mod::get()->getSettingValue<bool>("capture-enabled")) return false;
     const bool demonsOnly = Mod::get()->getSettingValue<bool>("filter-demons-only");
@@ -235,6 +306,18 @@ public:
     void death(PlayerObject* player) {
         if (!owns(player) || m_attempt.id.empty() || m_attempt.finished) return;
         auto* object = (m_lastFatalPlayer == player) ? m_lastFatalObject : nullptr;
+        std::string klass = objectClass(object);
+        std::string confidence = object ? (klass == "unknown" ? "low" : "medium") : "none";
+        if (klass == "unknown" && object) {
+            // GameObjectType follows the GD 2.2 convention (2=Hazard, 3=Solid,
+            // 5=Slope). The raw object_type stays in the payload for later
+            // validation, so these classifications are low-confidence facts.
+            switch (static_cast<int>(object->m_objectType)) {
+                case 2: klass = "hazard"; confidence = "low"; break;
+                case 3: klass = "block"; confidence = "low"; break;
+                case 5: klass = "slope"; confidence = "low"; break;
+            }
+        }
         std::ostringstream context;
         context << "[";
         bool first = true;
@@ -249,8 +332,8 @@ public:
         write("death_context", "\"attempt_id\":" + jsonString(m_attempt.id) +
             ",\"player_snapshot\":" + playerJson(player, player == m_playLayer->m_player2 ? 2 : 1) +
             ",\"fatal_object\":" + objectJson(object) +
-            ",\"cause\":{\"classification\":" + jsonString(objectClass(object)) +
-            ",\"confidence\":" + jsonString(object ? (objectClass(object) == "unknown" ? "low" : "medium") : "none") + "}" +
+            ",\"cause\":{\"classification\":" + jsonString(klass) +
+            ",\"confidence\":" + jsonString(confidence) + "}" +
             ",\"context_seconds\":5,\"preceding_events\":" + context.str());
         finishAttempt("death", player);
     }
@@ -286,6 +369,13 @@ public:
             return;
         }
         finishAttempt("abandoned", nullptr);
+        if (m_playLayer && m_playLayer->m_level) {
+            auto levelID = static_cast<int>(m_playLayer->m_level->m_levelID);
+            auto snapshot = deathTrackerSnapshot(levelID, std::string(m_playLayer->m_level->m_levelName));
+            if (!snapshot.empty()) {
+                write("death_tracker_snapshot", "\"session_id\":" + jsonString(m_sessionId) + snapshot);
+            }
+        }
         write("session_ended", "\"session_id\":" + jsonString(m_sessionId));
         m_output.flush();
         m_output.close();

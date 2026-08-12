@@ -23,6 +23,7 @@ _EVENT_TYPES = frozenset(
         "death_context",
         "copy_level_link",
         "reference_run_saved",
+        "death_tracker_snapshot",
     }
 )
 _ATTEMPT_BOUND_EVENTS = frozenset(
@@ -79,6 +80,11 @@ def _validate_event_specific_fields(event: dict[str, Any]) -> None:
         _require_fields(event, {"outcome", "start_x", "end_x", "training_segment"}, kind)
         if event["outcome"] not in _OUTCOMES or not all(_is_number(event[field]) for field in ("start_x", "end_x")) or not isinstance(event["training_segment"], bool):
             raise TelemetryValidationError("attempt_ended has invalid fields")
+    elif kind == "death_tracker_snapshot":
+        _require_string(event, "session_id", kind)
+        _require_fields(event, {"level_id", "level_name"}, kind)
+        if not _is_number(event["level_id"]) or not isinstance(event["level_name"], str):
+            raise TelemetryValidationError("death_tracker_snapshot has invalid fields")
     elif kind in _ATTEMPT_BOUND_EVENTS:
         _require_string(event, "attempt_id", kind)
         if kind == "gameplay_event":

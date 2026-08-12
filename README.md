@@ -18,8 +18,9 @@ telemetria rica (schema 2.0.0) e adiciona o pipeline privado relay → hub.
 - `death_context`: snapshot fatal (incluindo modo, mini, mirror, gravidade e velocidade) mais os cinco segundos precedentes de eventos.
 - `copy_level_link`: começa como `needs_confirmation`; o mod não adivinha vínculo oficial.
 - `reference_run_saved`: referência de treino ativa para uma cópia.
+- `death_tracker_snapshot`: no fechamento da sessão, o mod lê (read-only) os dados do Death Tracker do nível — `attempts`, `new_best_percent` (último newBest), `real_end_percent`, `difficulty` e o `general.dt` bruto — para a análise ter a porcentagem real.
 
-Campos factuais permanecem separados de inferências; classificações desconhecidas ficam `unknown`.
+Campos factuais permanecem separados de inferências; classificações desconhecidas ficam `unknown`. Objetos não reconhecidos pela tabela de IDs ganham classificação por tipo do GD (hazard/block/slope) com confiança baixa, mantendo o `object_type` cru no payload.
 
 ## Filtro de dificuldade
 
