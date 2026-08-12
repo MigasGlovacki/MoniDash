@@ -178,3 +178,32 @@ def test_organize_session_sanitizes_unsafe_level_names(tmp_path):
     assert organized is not None
     assert all(character not in organized.name for character in '<>:"/\\|?*')
     assert organized.parent.name == "a_b_c_d_e_f_g_h_i_j"
+
+
+@pytest.mark.parametrize(
+    ("raw_name", "expected_folder"),
+    [
+        ("Stereo Madness SP", "Stereo Madness"),
+        ("Stereo Madness Start Position", "Stereo Madness"),
+        ("Nightmare StartPosition", "Nightmare"),
+        ("X startpos", "X"),
+        ("NoSuffixHere", "NoSuffixHere"),
+        ("SP", "SP"),
+        ("SP Only", "SP Only"),
+        ("Stereo Madness sp ", "Stereo Madness"),
+    ],
+)
+def test_training_copy_suffix_groups_with_official_level(tmp_path, raw_name, expected_folder):
+    name_json = json.dumps(raw_name, ensure_ascii=False)
+    raw = (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1","monotonic_seconds":0,"session_id":"x","local_date":"2026-08-11","level":{"id":9,"name":'
+        + name_json.encode()
+        + b'}}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"2","monotonic_seconds":1,"session_id":"x"}\n'
+    )
+    session = parse_session(raw)
+
+    organized = organize_session(tmp_path, session)
+
+    assert organized is not None
+    assert organized.parent.name == expected_folder

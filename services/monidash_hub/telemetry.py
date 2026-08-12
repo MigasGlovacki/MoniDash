@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -208,19 +209,34 @@ def _sanitize_name(name: str) -> str:
     return cleaned[:80] or "unnamed"
 
 
+# Training copies saved in the editor follow João's convention: the official
+# level name plus a trailing "SP" / "Start Position" marker. Those sessions are
+# grouped under the official level's folder so the copy and the original live
+# side by side in the organized view.
+_TRAINING_COPY_SUFFIX = re.compile(r"\s+(?:SP|Start\s*Position|StartPosition|StartPos)\s*$", re.IGNORECASE)
+
+
+def _official_level_name(name: str) -> str:
+    cleaned = _sanitize_name(name)
+    stripped = _TRAINING_COPY_SUFFIX.sub("", cleaned).strip()
+    return stripped or cleaned
+
+
 def organize_session(raw_directory: Path, session: ParsedSession) -> Path | None:
     """Write an organized copy at sessions/<local_date>/<level_name>/<digest>.jsonl.
 
     The raw digest-addressed file remains the immutable source of truth; this
     copy is a human-friendly view grouped by the player's local date and the
-    level name. Missing metadata falls back to UTC date and level-<id>.
+    level name. Training copies named "<level> SP"/"<level> Start Position"
+    are grouped under the official level name. Missing metadata falls back to
+    UTC date and level-<id>.
     """
     started = next((event for event in session.events if event["event_type"] == "session_started"), None)
     if started is None:
         return None
     level = started.get("level") or {}
     local_date = str(started.get("local_date") or _utc_date(started.get("timestamp_ms")))
-    level_name = _sanitize_name(str(level.get("name") or "") or f"level-{level.get('id', '?')}")
+    level_name = _official_level_name(str(level.get("name") or "") or f"level-{level.get('id', '?')}")
     target = raw_directory.parent / "sessions" / local_date / level_name / f"{session.digest}.jsonl"
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
