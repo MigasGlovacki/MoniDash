@@ -59,7 +59,9 @@ um `session_started`; exatamente um `session_ended` como evento final; e IDs de
 sessão coerentes. Ele grava bytes originais uma vez em `raw/<sha256>.jsonl`,
 indexa resumos em SQLite transacionalmente e cria uma cópia organizada em
 `sessions/<data-local>/<nome-da-fase>/<sha256>.jsonl` (data local do jogador,
-nome da fase legível). Reenvios do mesmo SHA-256 são idempotentes.
+nome da fase legível). Cópias de treino salvas no editor com o sufixo
+`SP`/`Start Position` (ex.: `Stereo Madness SP`) são agrupadas na pasta da fase
+oficial. Reenvios do mesmo SHA-256 são idempotentes.
 
 ### Hub privado
 
