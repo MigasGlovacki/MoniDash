@@ -150,20 +150,20 @@ public:
     }
 
     void input(int button, bool player2, bool pressed) {
-        if (!active() || m_attempt.id.empty()) return;
+        if (!active() || m_attempt.id.empty() || m_attempt.finished) return;
         event("input", "\"button\":" + std::to_string(button) +
             ",\"player\":" + std::to_string(player2 ? 2 : 1) +
             ",\"pressed\":" + std::string(pressed ? "true" : "false"));
     }
 
     void interaction(PlayerObject* player, GameObject* object) {
-        if (!owns(player) || m_attempt.id.empty()) return;
+        if (!owns(player) || m_attempt.id.empty() || m_attempt.finished) return;
         event("interaction", "\"player\":" + std::to_string(player == m_playLayer->m_player2 ? 2 : 1) +
             ",\"object\":" + objectJson(object));
     }
 
     void sample() {
-        if (!active() || m_attempt.id.empty() || !m_playLayer->m_player1) return;
+        if (!active() || m_attempt.id.empty() || m_attempt.finished || !m_playLayer->m_player1) return;
         auto* p1 = m_playLayer->m_player1;
         auto signature = playerMode(p1) + ":" + (p1->m_isUpsideDown ? "up" : "down") + ":" +
             std::to_string(static_cast<int>(p1->m_yVelocity)) + ":" + std::to_string(p1->m_playerSpeed);
