@@ -31,6 +31,8 @@ O mod tem ajustes no menu do Geode (Settings):
 
 Com os dois desligados, todas as fases são gravadas. Com qualquer um ligado, fases fora do filtro **não geram arquivo local** — não poluem eventos nem chegam ao hub. Se você jogar uma fase leve depois de uma elegível, a fase leve simplesmente não é registrada.
 
+Cópias de treino salvas no editor (`Fase SP` / `Fase Start Position`) são **sempre capturadas**, mesmo com os filtros ligados: elas não carregam o rating de demon do servidor, e o objetivo é justamente registrar o treino. No hub, elas são agrupadas na pasta da fase oficial.
+
 ## Por que dois dados?
 
 Death Tracker continua sendo a fonte macro (mortes agrupadas por percentual).

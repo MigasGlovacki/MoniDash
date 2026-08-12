@@ -3,7 +3,9 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <ctime>
 #include <deque>
 #include <filesystem>
@@ -64,6 +66,24 @@ std::string localDate() {
     return buffer;
 }
 
+bool hasTrainingSuffix(const std::string& name) {
+    auto lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    // Matches the hub's grouping rule: "<level> SP", "<level> Start Position",
+    // "<level> StartPosition" or "<level> StartPos", case-insensitive.
+    static const std::vector<std::string> suffixes = {
+        " sp", " start position", " startposition", " startpos"
+    };
+    for (const auto& suffix : suffixes) {
+        if (lower.size() >= suffix.size() &&
+            lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool levelEligible(GJGameLevel* level) {
     if (!Mod::get()->getSettingValue<bool>("capture-enabled")) return false;
     const bool demonsOnly = Mod::get()->getSettingValue<bool>("filter-demons-only");
@@ -73,7 +93,10 @@ bool levelEligible(GJGameLevel* level) {
     const int stars = level ? static_cast<int>(level->m_stars) : 0;
     if (demonsOnly && isDemon) return true;
     if (stars9 && stars >= 9) return true;
-    return false;
+    // Editor training copies ("<level> SP" / "<level> Start Position") do not
+    // carry the server demon rating; treat them as eligible so practice runs
+    // are captured even when the filters are on.
+    return level && level->m_localOrSaved && hasTrainingSuffix(level->m_levelName);
 }
 
 std::string playerMode(PlayerObject* player) {
@@ -123,7 +146,8 @@ public:
         endSession();
         if (!Mod::get()->getSettingValue<bool>("capture-enabled")) return;
         if (!levelEligible(level)) {
-            log::info("MoniDash skipped session: level does not pass the difficulty filter");
+            log::info("MoniDash skipped session: {} does not pass the difficulty filter",
+                level ? level->m_levelName : "unknown");
             return;
         }
 
