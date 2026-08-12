@@ -111,6 +111,8 @@ public:
         }
 
         auto length = level ? level->m_levelLength : -1;
+        auto* settings = layer->m_levelSettings;
+        const bool mirrorMode = settings && settings->m_mirrorMode;
         write("session_started", "\"session_id\":" + jsonString(m_sessionId) +
             ",\"level\":{\"id\":" + std::to_string(level ? static_cast<int>(level->m_levelID) : 0) +
             ",\"name\":" + jsonString(level ? level->m_levelName : "") +
@@ -118,7 +120,8 @@ public:
             ",\"length_category\":" + std::to_string(length) +
             ",\"extent_x\":" + number(layer->m_endXPosition) +
             ",\"local_or_saved\":" + std::string(level && level->m_localOrSaved ? "true" : "false") +
-            ",\"platformer\":" + std::string(level && level->isPlatformer() ? "true" : "false") + "}");
+            ",\"platformer\":" + std::string(level && level->isPlatformer() ? "true" : "false") +
+            ",\"mirror_mode\":" + std::string(mirrorMode ? "true" : "false") + "}");
     }
 
     void beginAttempt() {
@@ -239,8 +242,11 @@ private:
         return stream.str();
     }
     std::string playerJson(PlayerObject* player, int playerNumber) const {
-        // Campos aditivos: "mini" (m_isMini) e "mirror" (m_isMirror) são campos
-        // públicos dos bindings GD 2.2+; o binding é verificado pelo build Windows.
+        // Os bindings Geode 5.8.2 / GD 2.2081 não expõem m_isMini nem m_isMirror
+        // no PlayerObject (verificado no build Windows); a escala (mini ≈ 0.6 vs
+        // 1.0) e a direção observável (is_going_left, correlata de espelhamento)
+        // são os fatos disponíveis. A classificação mini/espelhado fica para a
+        // análise, separada dos dados observados.
         return "{\"player\":" + std::to_string(playerNumber) +
             ",\"x\":" + number(player->getPositionX()) + ",\"y\":" + number(player->getPositionY()) +
             ",\"y_velocity\":" + number(player->m_yVelocity) +
@@ -248,8 +254,8 @@ private:
             ",\"mode\":" + jsonString(playerMode(player)) +
             ",\"gravity\":" + jsonString(player->m_isUpsideDown ? "up" : "down") +
             ",\"on_ground\":" + std::string(player->m_isOnGround ? "true" : "false") +
-            ",\"mini\":" + std::string(player->m_isMini ? "true" : "false") +
-            ",\"mirror\":" + std::string(player->m_isMirror ? "true" : "false") + "}";
+            ",\"scale\":" + number(player->getScale()) +
+            ",\"is_going_left\":" + std::string(player->m_isGoingLeft ? "true" : "false") + "}";
     }
     static std::string objectJson(GameObject* object) {
         if (!object) return "null";
