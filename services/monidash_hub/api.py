@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from .config import Settings
 from .store import HubStore
-from .telemetry import TelemetryValidationError, parse_session, store_raw
+from .telemetry import TelemetryValidationError, organize_session, parse_session, store_raw
 
 
 def _declared_body_is_too_large(request: Request, maximum: int) -> bool:
@@ -61,6 +61,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Persist the immutable raw bytes first; this is acceptable because a crash
         # here is recovered by a later import that re-indexes from the same bytes.
         store_raw(settings.raw_dir, session)
+        # The organized copy (sessions/<date>/<level>/<digest>.jsonl) is a
+        # convenience view; a failure here must not reject an otherwise valid
+        # session, so it is intentionally best-effort.
+        try:
+            organize_session(settings.raw_dir, session)
+        except OSError:
+            pass
         # Idempotency is decided by the index, not the raw file: a fresh index import
         # (even when the raw file already existed from an earlier crashed attempt) is a
         # new, non-idempotent import; a pre-existing index entry is a true duplicate.

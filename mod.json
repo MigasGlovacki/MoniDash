@@ -13,6 +13,16 @@
       "type": "bool",
       "default": true,
       "name": "Capture telemetry"
+    },
+    "filter-demons-only": {
+      "type": "bool",
+      "default": true,
+      "name": "Apenas Demons"
+    },
+    "filter-stars9": {
+      "type": "bool",
+      "default": false,
+      "name": "Mínimo 9 estrelas"
     }
   }
 }

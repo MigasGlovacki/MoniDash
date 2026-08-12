@@ -12,7 +12,7 @@ telemetria rica (schema 2.0.0) e adiciona o pipeline privado relay → hub.
 
 ## Eventos do mod
 
-- `session_started` e `session_ended`: limite de uma sessão e metadados conhecidos do nível.
+- `session_started` e `session_ended`: limite de uma sessão e metadados conhecidos do nível (incluindo `local_date`, `stars`, `is_demon`, `demon_difficulty` e `mirror_mode`).
 - `attempt_started` e `attempt_ended`: tentativa, intervalo espacial e resultado.
 - `gameplay_event`: input, interação com objeto ou mudança observável do estado do jogador.
 - `death_context`: snapshot fatal (incluindo modo, mini, mirror, gravidade e velocidade) mais os cinco segundos precedentes de eventos.
@@ -20,6 +20,16 @@ telemetria rica (schema 2.0.0) e adiciona o pipeline privado relay → hub.
 - `reference_run_saved`: referência de treino ativa para uma cópia.
 
 Campos factuais permanecem separados de inferências; classificações desconhecidas ficam `unknown`.
+
+## Filtro de dificuldade
+
+O mod tem ajustes no menu do Geode (Settings):
+
+- `Capture telemetry` — liga/desliga a captura.
+- `Apenas Demons` (padrão: ligado) — só grava sessões de fases Demon.
+- `Mínimo 9 estrelas` (padrão: desligado) — só grava sessões com 9★ ou mais.
+
+Com os dois desligados, todas as fases são gravadas. Com qualquer um ligado, fases fora do filtro **não geram arquivo local** — não poluem eventos nem chegam ao hub. Se você jogar uma fase leve depois de uma elegível, a fase leve simplesmente não é registrada.
 
 ## Por que dois dados?
 
@@ -46,9 +56,10 @@ O pacote esperado é `build-ninja\migas.monidash.geode`.
 O hub Python aceita somente JSONL UTF-8 completo e estrito: cada linha precisa ter
 `schema_version`, `event_type`, `timestamp_ms` e `monotonic_seconds`; exatamente
 um `session_started`; exatamente um `session_ended` como evento final; e IDs de
-sessão coerentes. Ele grava bytes originais uma vez em `raw/<sha256>.jsonl` e
-indexa resumos em SQLite transacionalmente. Reenvios do mesmo SHA-256 são
-idempotentes.
+sessão coerentes. Ele grava bytes originais uma vez em `raw/<sha256>.jsonl`,
+indexa resumos em SQLite transacionalmente e cria uma cópia organizada em
+`sessions/<data-local>/<nome-da-fase>/<sha256>.jsonl` (data local do jogador,
+nome da fase legível). Reenvios do mesmo SHA-256 são idempotentes.
 
 ### Hub privado
 

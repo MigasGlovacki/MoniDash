@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -192,3 +193,39 @@ def store_raw(raw_directory: Path, session: ParsedSession) -> tuple[Path, bool]:
         if target.read_bytes() != session.raw:
             raise RuntimeError("digest collision or corrupt raw session")
         return target, False
+
+
+def _utc_date(timestamp_ms: object) -> str:
+    try:
+        return datetime.fromtimestamp(int(timestamp_ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return "unknown-date"
+
+
+def _sanitize_name(name: str) -> str:
+    cleaned = "".join("_" if character in '<>:"/\\|?*' or ord(character) < 32 else character for character in name)
+    cleaned = cleaned.strip(" .")
+    return cleaned[:80] or "unnamed"
+
+
+def organize_session(raw_directory: Path, session: ParsedSession) -> Path | None:
+    """Write an organized copy at sessions/<local_date>/<level_name>/<digest>.jsonl.
+
+    The raw digest-addressed file remains the immutable source of truth; this
+    copy is a human-friendly view grouped by the player's local date and the
+    level name. Missing metadata falls back to UTC date and level-<id>.
+    """
+    started = next((event for event in session.events if event["event_type"] == "session_started"), None)
+    if started is None:
+        return None
+    level = started.get("level") or {}
+    local_date = str(started.get("local_date") or _utc_date(started.get("timestamp_ms")))
+    level_name = _sanitize_name(str(level.get("name") or "") or f"level-{level.get('id', '?')}")
+    target = raw_directory.parent / "sessions" / local_date / level_name / f"{session.digest}.jsonl"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("xb") as output:
+            output.write(session.raw)
+    except FileExistsError:
+        pass
+    return target

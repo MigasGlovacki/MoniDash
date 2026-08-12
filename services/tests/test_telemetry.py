@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-from monidash_hub.telemetry import TelemetryValidationError, parse_session, store_raw
+from monidash_hub.telemetry import TelemetryValidationError, organize_session, parse_session, store_raw
 
 FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "sample-session.jsonl"
 
@@ -137,3 +137,44 @@ def test_raw_storage_is_digest_named_and_never_overwrites(tmp_path):
     assert path.read_bytes() == payload
     assert created is True
     assert created_again is False
+
+
+def test_organize_session_groups_by_local_date_and_level_name(tmp_path):
+    payload = FIXTURE.read_bytes()
+    session = parse_session(payload)
+
+    organized = organize_session(tmp_path, session)
+
+    assert organized is not None
+    assert organized == tmp_path.parent / "sessions" / "2026-08-11" / "Test" / f"{session.digest}.jsonl"
+    assert organized.read_bytes() == payload
+
+
+def test_organize_session_falls_back_to_utc_date_and_level_id(tmp_path):
+    raw = (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1786494431283","monotonic_seconds":0,"session_id":"x","level":{"id":21,"name":""}}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"1786494431284","monotonic_seconds":1,"session_id":"x"}\n'
+    )
+    session = parse_session(raw)
+
+    organized = organize_session(tmp_path, session)
+
+    # 1786494431283 ms = 2026-08-12 UTC (the player's local date may differ,
+    # which is why the recorder also sends local_date); empty name -> level-21
+    assert organized is not None
+    assert "2026-08-12" in organized.parts
+    assert "level-21" in organized.parts
+
+
+def test_organize_session_sanitizes_unsafe_level_names(tmp_path):
+    raw = (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"1","monotonic_seconds":0,"session_id":"x","local_date":"2026-08-11","level":{"id":5,"name":"a/b\\\\c:d*e?f\\"g<h>i|j"}}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"2","monotonic_seconds":1,"session_id":"x"}\n'
+    )
+    session = parse_session(raw)
+
+    organized = organize_session(tmp_path, session)
+
+    assert organized is not None
+    assert all(character not in organized.name for character in '<>:"/\\|?*')
+    assert organized.parent.name == "a_b_c_d_e_f_g_h_i_j"

@@ -4,6 +4,7 @@
 #include <Geode/modify/PlayerObject.hpp>
 
 #include <chrono>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -48,6 +49,31 @@ std::string jsonString(std::string_view value) {
 std::string unixMillis() {
     auto now = std::chrono::system_clock::now().time_since_epoch();
     return std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+}
+
+std::string localDate() {
+    std::time_t now = std::time(nullptr);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char buffer[16];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d", &local);
+    return buffer;
+}
+
+bool levelEligible(GJGameLevel* level) {
+    if (!Mod::get()->getSettingValue<bool>("capture-enabled")) return false;
+    const bool demonsOnly = Mod::get()->getSettingValue<bool>("filter-demons-only");
+    const bool stars9 = Mod::get()->getSettingValue<bool>("filter-stars9");
+    if (!demonsOnly && !stars9) return true;
+    const bool isDemon = level && static_cast<int>(level->m_demon) != 0;
+    const int stars = level ? static_cast<int>(level->m_stars) : 0;
+    if (demonsOnly && isDemon) return true;
+    if (stars9 && stars >= 9) return true;
+    return false;
 }
 
 std::string playerMode(PlayerObject* player) {
@@ -96,6 +122,10 @@ public:
         if (m_playLayer == layer) return;
         endSession();
         if (!Mod::get()->getSettingValue<bool>("capture-enabled")) return;
+        if (!levelEligible(level)) {
+            log::info("MoniDash skipped session: level does not pass the difficulty filter");
+            return;
+        }
 
         m_playLayer = layer;
         m_startedAt = std::chrono::steady_clock::now();
@@ -114,12 +144,19 @@ public:
         auto length = level ? level->m_levelLength : -1;
         auto* settings = layer->m_levelSettings;
         const bool mirrorMode = settings && settings->m_mirrorMode;
+        const bool isDemon = level && static_cast<int>(level->m_demon) != 0;
+        const int stars = level ? static_cast<int>(level->m_stars) : 0;
+        const int demonDifficulty = isDemon ? level->m_demonDifficulty : -1;
         write("session_started", "\"session_id\":" + jsonString(m_sessionId) +
+            ",\"local_date\":" + jsonString(localDate()) +
             ",\"level\":{\"id\":" + std::to_string(level ? static_cast<int>(level->m_levelID) : 0) +
             ",\"name\":" + jsonString(level ? level->m_levelName : "") +
             ",\"creator\":" + jsonString(level ? level->m_creatorName : "") +
             ",\"length_category\":" + std::to_string(length) +
             ",\"extent_x\":" + number(layer->m_endXPosition) +
+            ",\"stars\":" + std::to_string(stars) +
+            ",\"is_demon\":" + std::string(isDemon ? "true" : "false") +
+            ",\"demon_difficulty\":" + std::to_string(demonDifficulty) +
             ",\"local_or_saved\":" + std::string(level && level->m_localOrSaved ? "true" : "false") +
             ",\"platformer\":" + std::string(level && level->isPlatformer() ? "true" : "false") +
             ",\"mirror_mode\":" + std::string(mirrorMode ? "true" : "false") + "}");
