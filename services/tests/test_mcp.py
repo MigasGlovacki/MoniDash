@@ -46,6 +46,13 @@ def test_initialize_returns_protocol_capabilities_and_server_info(tmp_path):
     assert resp["result"]["serverInfo"]["name"] == "monidash-hub"
 
 
+def test_initialize_negotiates_supported_client_version(tmp_path):
+    tools, _ = _tools(tmp_path)
+    resp = handle_request(_req("initialize", ident=1, params=_initialize_params(protocolVersion="2025-11-25")), tools)
+    assert resp is not None
+    assert resp["result"]["protocolVersion"] == "2025-11-25"
+
+
 def test_initialized_notification_has_no_response(tmp_path):
     tools, _ = _tools(tmp_path)
     assert handle_request(_req("initialized", ident=None), tools) is None
@@ -57,7 +64,7 @@ def test_mcp_requires_supported_initialize_then_initialized_before_calls(tmp_pat
 
     before_ready = handle_request(_req("tools/list", ident=1), tools, state)
     assert before_ready["error"]["code"] == -32600
-    unsupported = handle_request(_req("initialize", ident=2, params=_initialize_params(protocolVersion="2024-11-05")), tools, state)
+    unsupported = handle_request(_req("initialize", ident=2, params=_initialize_params(protocolVersion="2099-01-01")), tools, state)
     assert unsupported["error"]["code"] == -32602
     initialized = handle_request(_req("initialize", ident=3, params=_initialize_params()), tools, state)
     assert initialized["result"]["protocolVersion"] == "2025-03-26"

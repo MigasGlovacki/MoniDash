@@ -45,7 +45,11 @@ class InternalError(RpcError):
 
 
 _MISSING = object()
-_SUPPORTED_PROTOCOL_VERSION = "2025-03-26"
+# Protocol versions the official MCP SDK clients may send; the server echoes
+# the client's version when it is supported (standard negotiation).
+_SUPPORTED_PROTOCOL_VERSIONS = frozenset(
+    {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+)
 
 
 @dataclass
@@ -92,8 +96,12 @@ def _dispatch(method: str, params: dict[str, Any], tools: QueryTools, state: Pro
     if method == "initialize":
         if state.initialized:
             raise InvalidRequest("initialize may only be called once")
-        if params.get("protocolVersion") != _SUPPORTED_PROTOCOL_VERSION:
-            raise InvalidParams(f"unsupported protocol version; expected {_SUPPORTED_PROTOCOL_VERSION}")
+        requested_version = params.get("protocolVersion")
+        if requested_version not in _SUPPORTED_PROTOCOL_VERSIONS:
+            raise InvalidParams(
+                "unsupported protocol version; supported: "
+                + ", ".join(sorted(_SUPPORTED_PROTOCOL_VERSIONS))
+            )
         capabilities = params.get("capabilities")
         client_info = params.get("clientInfo")
         if not isinstance(capabilities, dict):
@@ -106,7 +114,7 @@ def _dispatch(method: str, params: dict[str, Any], tools: QueryTools, state: Pro
             raise InvalidParams("initialize clientInfo requires a non-empty version")
         state.initialized = True
         return {
-            "protocolVersion": _SUPPORTED_PROTOCOL_VERSION,
+            "protocolVersion": requested_version,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "monidash-hub", "version": "0.1.0"},
         }
