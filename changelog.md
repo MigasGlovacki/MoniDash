@@ -29,6 +29,9 @@
   Death Tracker: attempts, newBest, realEndPercent, difficulty, general.dt).
 - Classificação de mortes ampliada: objetos desconhecidos ganham tipo do GD
   (hazard/block/slope) com confiança baixa; `object_type` cru fica no payload.
+- O validador do hub aceita as classificações de morte `hazard` e `slope`
+  (alinhado ao que o mod grava; antes, sessões com essas mortes eram rejeitadas
+  com 422).
 - Hub com watchdog via cron (reinício automático se cair), independente da
   sessão do Hermes.
 - O pacote continua sendo `migas.monidash` (v0.2.0), atualizando o mod

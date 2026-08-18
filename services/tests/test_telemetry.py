@@ -259,6 +259,25 @@ def test_death_context_accepts_null_death_percent():
     assert death["death_percent"] is None
 
 
+def _death_with_classification(classification: bytes) -> bytes:
+    return _session_with_death(b"").replace(
+        b'"classification":"unknown"', b'"classification":"' + classification + b'"'
+    )
+
+
+@pytest.mark.parametrize("classification", [b"spike", b"block", b"hazard", b"slope", b"unknown"])
+def test_death_context_accepts_documented_classifications(classification):
+    session = parse_session(_death_with_classification(classification))
+    death = next(event for event in session.events if event["event_type"] == "death_context")
+    assert death["cause"]["classification"] == classification.decode()
+
+
+@pytest.mark.parametrize("classification", [b"magic", b"HAZARD", b""])
+def test_death_context_rejects_unknown_classification(classification):
+    with pytest.raises(TelemetryValidationError, match="death_context has invalid fields"):
+        parse_session(_death_with_classification(classification))
+
+
 @pytest.mark.parametrize(
     ("bad_field", "message"),
     [
