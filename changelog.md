@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `death_context` agora registra `death_percent`: a porcentagem da morte
+  calculada com a mesma fórmula do Death Tracker v3.0.9 (posição do player 1 ÷
+  comprimento do nível, com fallback por tempo no timestamp da música),
+  clampada em `[0, 100]`; `null` quando não houver base confiável.
+- O hub indexa `death_percent` na tabela `deaths` (com migração automática de
+  bancos existentes) e a tool MCP `death_context` passa a devolvê-lo.
+
 ## v0.2.0
 
 - Substitui o contrato MVP (schema 1, sessões em pasta + manifest) pela

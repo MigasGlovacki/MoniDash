@@ -121,6 +121,19 @@ def test_tools_call_session_summary_and_death_clusters_with_real_data(tmp_path):
     assert resp2["result"]["structuredContent"][0]["classification"] == "spike"
 
 
+def test_tools_call_death_context_returns_death_percent(tmp_path):
+    tools, session = _tools(tmp_path, fixture=DEATHS_FIXTURE)
+    resp = handle_request(_req("tools/call", ident=6, params={"name": "death_context", "arguments": {"digest": session.digest}}), tools)
+    rows = resp["result"]["structuredContent"]
+    assert len(rows) == 3
+    by_attempt = {row["attempt_id"]: row["death_percent"] for row in rows}
+    assert by_attempt == {
+        "session-deaths-attempt-1": 15.0,
+        "session-deaths-attempt-2": 15.5,
+        "session-deaths-attempt-3": 45.0,
+    }
+
+
 def test_tools_call_missing_required_argument_is_invalid_params(tmp_path):
     tools, _ = _tools(tmp_path)
     resp = handle_request(_req("tools/call", ident=6, params={"name": "session_summary", "arguments": {}}), tools)

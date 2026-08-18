@@ -53,3 +53,32 @@ def test_death_tracker_snapshot_is_indexed_and_queryable(tmp_path):
     assert rows[0]["new_best_percent"] == 69
     assert rows[0]["real_end_percent"] == 100
     assert rows[0]["difficulty"] == 7
+
+
+def test_death_percent_is_indexed_and_queryable(tmp_path):
+    deaths_fixture = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "sample-deaths-session.jsonl"
+    store = HubStore(tmp_path / "hub.sqlite3")
+    session = parse_session(deaths_fixture.read_bytes())
+    assert store.import_session(session) is True
+
+    rows = store.death_context(session.digest)
+    percents = {row["attempt_id"]: row["death_percent"] for row in rows}
+    assert percents == {
+        "session-deaths-attempt-1": 15.0,
+        "session-deaths-attempt-2": 15.5,
+        "session-deaths-attempt-3": 45.0,
+    }
+
+
+def test_existing_database_is_migrated_with_death_percent_column(tmp_path):
+    import sqlite3
+
+    database = tmp_path / "hub.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "CREATE TABLE deaths (digest TEXT NOT NULL, attempt_id TEXT, monotonic_seconds REAL, classification TEXT, context_json TEXT)"
+        )
+    store = HubStore(database)
+    with sqlite3.connect(database) as db:
+        columns = {row[1] for row in db.execute("PRAGMA table_info(deaths)")}
+    assert "death_percent" in columns

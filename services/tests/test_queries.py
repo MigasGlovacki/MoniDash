@@ -58,6 +58,7 @@ def test_death_context_returns_real_death_rows_and_filters_by_attempt(tmp_path):
     assert classifications.count("block") == 1
     spike_context = next(row for row in all_deaths if row["attempt_id"] == "session-deaths-attempt-1")
     assert spike_context["monotonic_seconds"] == 12.3
+    assert spike_context["death_percent"] == 15.0
     assert "fatal_object" in spike_context["context_json"]
 
     only_block = tools.death_context(session.digest, "session-deaths-attempt-3")

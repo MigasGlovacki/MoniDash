@@ -233,3 +233,40 @@ def test_death_tracker_snapshot_event_parses_and_requires_fields():
     )
     with pytest.raises(TelemetryValidationError, match="missing fields"):
         parse_session(missing)
+
+
+def _session_with_death(death_fields: bytes) -> bytes:
+    return (
+        b'{"schema_version":"2.0.0","event_type":"session_started","timestamp_ms":"0","monotonic_seconds":0,"session_id":"x"}\n'
+        b'{"schema_version":"2.0.0","event_type":"attempt_started","timestamp_ms":"1","monotonic_seconds":0.1,"attempt_id":"a","attempt_number":1,"training_segment":false,"start_x":0}\n'
+        b'{"schema_version":"2.0.0","event_type":"death_context","timestamp_ms":"2","monotonic_seconds":0.2,"attempt_id":"a","player_snapshot":{"player":1,"x":100,"y":100},"fatal_object":null,"cause":{"classification":"unknown","confidence":"none"},"context_seconds":5,"preceding_events":[]'
+        + death_fields
+        + b'}\n'
+        b'{"schema_version":"2.0.0","event_type":"attempt_ended","timestamp_ms":"3","monotonic_seconds":0.3,"attempt_id":"a","outcome":"death","start_x":0,"end_x":100,"training_segment":false}\n'
+        b'{"schema_version":"2.0.0","event_type":"session_ended","timestamp_ms":"4","monotonic_seconds":0.4,"session_id":"x"}\n'
+    )
+
+
+def test_death_context_accepts_valid_death_percent():
+    session = parse_session(_session_with_death(b',"death_percent":42.5'))
+    death = next(event for event in session.events if event["event_type"] == "death_context")
+    assert death["death_percent"] == 42.5
+
+
+def test_death_context_accepts_null_death_percent():
+    session = parse_session(_session_with_death(b',"death_percent":null'))
+    death = next(event for event in session.events if event["event_type"] == "death_context")
+    assert death["death_percent"] is None
+
+
+@pytest.mark.parametrize(
+    ("bad_field", "message"),
+    [
+        (b',"death_percent":"fifty"', "death_percent"),
+        (b',"death_percent":101', "death_percent"),
+        (b',"death_percent":-1', "death_percent"),
+    ],
+)
+def test_death_context_rejects_invalid_death_percent(bad_field, message):
+    with pytest.raises(TelemetryValidationError, match=message):
+        parse_session(_session_with_death(bad_field))

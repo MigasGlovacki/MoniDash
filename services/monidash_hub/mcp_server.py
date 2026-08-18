@@ -72,7 +72,7 @@ _TOOLS = [
  {"name": "session_summary", "description": "Summary by digest", "inputSchema": {"type": "object", "properties": {"digest": {"type": "string"}}, "required": ["digest"]}},
  {"name": "death_clusters", "description": "Death clusters", "inputSchema": {"type": "object", "properties": {"digest": {"type": "string"}}}},
  {"name": "reference_runs", "description": "Reference runs", "inputSchema": {"type": "object", "properties": {"digest": {"type": "string"}}}},
- {"name": "death_context", "description": "Death context by session", "inputSchema": {"type": "object", "properties": {"digest": {"type": "string"}, "attempt_id": {"type": "string"}}, "required": ["digest"]}},
+ {"name": "death_context", "description": "Death context by session (includes death_percent)", "inputSchema": {"type": "object", "properties": {"digest": {"type": "string"}, "attempt_id": {"type": "string"}}, "required": ["digest"]}},
 ]
 _TOOL_BY_NAME = {tool["name"]: tool for tool in _TOOLS}
 

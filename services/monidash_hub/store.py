@@ -30,10 +30,15 @@ class HubStore:
                   event_count INTEGER NOT NULL, imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS attempts (digest TEXT NOT NULL, attempt_id TEXT NOT NULL, outcome TEXT, start_x REAL, end_x REAL);
-                CREATE TABLE IF NOT EXISTS deaths (digest TEXT NOT NULL, attempt_id TEXT, monotonic_seconds REAL, classification TEXT, context_json TEXT);
+                CREATE TABLE IF NOT EXISTS deaths (digest TEXT NOT NULL, attempt_id TEXT, monotonic_seconds REAL, classification TEXT, death_percent REAL, context_json TEXT);
                 CREATE TABLE IF NOT EXISTS references_run (digest TEXT NOT NULL, reference_id TEXT, attempt_id TEXT, start_x REAL, end_x REAL, link_status TEXT);
                 CREATE TABLE IF NOT EXISTS death_tracker_snapshots (digest TEXT NOT NULL, level_id INTEGER, level_name TEXT, attempts INTEGER, new_best_percent INTEGER, real_end_percent INTEGER, difficulty INTEGER, snapshot_json TEXT);
             """)
+            # Migration for hubs created before death_percent existed: add the
+            # column in place so existing SQLite databases keep their history.
+            columns = {row[1] for row in db.execute("PRAGMA table_info(deaths)")}
+            if "death_percent" not in columns:
+                db.execute("ALTER TABLE deaths ADD COLUMN death_percent REAL")
 
     def import_session(self, session: ParsedSession) -> bool:
         return self.import_events(session.digest, session.session_id, session.events)
@@ -57,7 +62,7 @@ class HubStore:
                         db.execute("UPDATE attempts SET outcome=?, end_x=? WHERE digest=? AND attempt_id=?", (event.get("outcome"), event.get("end_x"), digest, event["attempt_id"]))
                     elif kind == "death_context":
                         cause = event.get("cause") or {}
-                        db.execute("INSERT INTO deaths VALUES (?, ?, ?, ?, ?)", (digest, event.get("attempt_id"), event["monotonic_seconds"], cause.get("classification"), json.dumps(event)))
+                        db.execute("INSERT INTO deaths VALUES (?, ?, ?, ?, ?, ?)", (digest, event.get("attempt_id"), event["monotonic_seconds"], cause.get("classification"), event.get("death_percent"), json.dumps(event)))
                     elif kind == "reference_run_saved":
                         segment = event.get("segment") or {}
                         db.execute("INSERT INTO references_run VALUES (?, ?, ?, ?, ?, ?)", (digest, event.get("reference_id"), event.get("attempt_id"), segment.get("start_x"), segment.get("end_x"), event.get("link_status")))
@@ -97,7 +102,7 @@ class HubStore:
         with self._connect() as db: return [dict(row) for row in db.execute(sql, args)]
 
     def death_context(self, digest: str, attempt_id: str | None = None) -> list[dict[str, Any]]:
-        sql, args = "SELECT attempt_id, monotonic_seconds, classification, context_json FROM deaths WHERE digest=?", [digest]
+        sql, args = "SELECT attempt_id, monotonic_seconds, classification, death_percent, context_json FROM deaths WHERE digest=?", [digest]
         if attempt_id: sql += " AND attempt_id=?"; args.append(attempt_id)
         with self._connect() as db: return [dict(row) for row in db.execute(sql, args)]
 

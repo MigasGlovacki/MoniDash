@@ -106,6 +106,9 @@ def _validate_event_specific_fields(event: dict[str, Any]) -> None:
             cause = event["cause"]
             if not isinstance(cause, dict) or cause.get("classification") not in {"spike", "block", "unknown"} or not _is_number(event["context_seconds"]) or not isinstance(event["preceding_events"], list):
                 raise TelemetryValidationError("death_context has invalid fields")
+            death_percent = event.get("death_percent")
+            if death_percent is not None and (not _is_number(death_percent) or not 0 <= death_percent <= 100):
+                raise TelemetryValidationError("death_context death_percent must be a finite number in [0, 100] or null")
 
 
 def parse_session(raw: bytes) -> ParsedSession:

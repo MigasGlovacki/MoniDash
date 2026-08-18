@@ -155,6 +155,25 @@ std::string deathTrackerSnapshot(int levelID, const std::string& levelName) {
         ",\"general_dt\":" + jsonString(general);
 }
 
+// Replica o cálculo de porcentagem de morte do Death Tracker v3.0.9
+// (DTPlayLayer::getActualProgress): para níveis com timestamp de música usa
+// tempo decorrido vs timestamp; caso contrário usa a posição do player 1
+// sobre o comprimento do nível. O Death Tracker sempre usa o player 1, e
+// mantemos isso para a porcentagem bater com a fonte macro. Retorna nullopt
+// quando não há base confiável para calcular (sem player ou nível sem comprimento).
+std::optional<double> deathPercent(PlayLayer* layer) {
+    if (!layer || !layer->m_level || !layer->m_player1) return std::nullopt;
+    float percent = 0.f;
+    if (layer->m_level->m_timestamp > 0) {
+        percent = static_cast<float>(layer->m_gameState.m_levelTime * 240.f) /
+            static_cast<float>(layer->m_level->m_timestamp) * 100.f;
+    } else {
+        if (layer->m_levelLength <= 0.f) return std::nullopt;
+        percent = layer->m_player1->getPositionX() / layer->m_levelLength * 100.f;
+    }
+    return std::clamp(static_cast<double>(percent), 0.0, 100.0);
+}
+
 bool levelEligible(GJGameLevel* level) {
     if (!Mod::get()->getSettingValue<bool>("capture-enabled")) return false;
     const bool demonsOnly = Mod::get()->getSettingValue<bool>("filter-demons-only");
@@ -329,7 +348,9 @@ public:
             first = false;
         }
         context << "]";
+        auto percent = deathPercent(m_playLayer);
         write("death_context", "\"attempt_id\":" + jsonString(m_attempt.id) +
+            ",\"death_percent\":" + (percent ? number(*percent) : "null") +
             ",\"player_snapshot\":" + playerJson(player, player == m_playLayer->m_player2 ? 2 : 1) +
             ",\"fatal_object\":" + objectJson(object) +
             ",\"cause\":{\"classification\":" + jsonString(klass) +

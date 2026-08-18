@@ -125,3 +125,22 @@ def test_death_clusters_over_stdio_with_real_death_data(tmp_path, mcp_process):
     clusters = data["result"]["structuredContent"]
     assert clusters[0]["classification"] == "spike"
     assert clusters[0]["deaths"] == 2
+
+
+def test_death_context_over_stdio_returns_death_percent(tmp_path, mcp_process):
+    sys.path.insert(0, str(SERVICES_DIR))
+    from monidash_hub.store import HubStore
+    from monidash_hub.telemetry import parse_session
+
+    session = parse_session(DEATHS_FIXTURE.read_bytes())
+    HubStore(tmp_path / "monidash.sqlite3").import_session(session)
+    _ready(mcp_process)
+
+    resp = _send(mcp_process, {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "death_context", "arguments": {"digest": session.digest}}})
+    data = json.loads(resp)
+    rows = data["result"]["structuredContent"]
+    assert {row["attempt_id"]: row["death_percent"] for row in rows} == {
+        "session-deaths-attempt-1": 15.0,
+        "session-deaths-attempt-2": 15.5,
+        "session-deaths-attempt-3": 45.0,
+    }

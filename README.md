@@ -15,7 +15,7 @@ telemetria rica (schema 2.0.0) e adiciona o pipeline privado relay → hub.
 - `session_started` e `session_ended`: limite de uma sessão e metadados conhecidos do nível (incluindo `local_date`, `stars`, `is_demon` e `mirror_mode`). A dificuldade exata do demon (Easy/Medium/Hard/Insane/Extreme) não é lida do nível no início da sessão — o campo não é populado de forma confiável — e é determinada na análise por fonte verificável.
 - `attempt_started` e `attempt_ended`: tentativa, intervalo espacial e resultado.
 - `gameplay_event`: input, interação com objeto ou mudança observável do estado do jogador.
-- `death_context`: snapshot fatal (incluindo modo, mini, mirror, gravidade e velocidade) mais os cinco segundos precedentes de eventos.
+- `death_context`: snapshot fatal (incluindo modo, mini, mirror, gravidade e velocidade) mais os cinco segundos precedentes de eventos. Cada morte agora carrega `death_percent`, a porcentagem calculada com a mesma fórmula do Death Tracker (posição do player 1 ÷ comprimento do nível, com fallback por tempo no timestamp da música), clampada em `[0, 100]`; fica `null` quando não há base confiável para calcular.
 - `copy_level_link`: começa como `needs_confirmation`; o mod não adivinha vínculo oficial.
 - `reference_run_saved`: referência de treino ativa para uma cópia.
 - `death_tracker_snapshot`: no fechamento da sessão, o mod lê (read-only) os dados do Death Tracker do nível — `attempts`, `new_best_percent` (último newBest), `real_end_percent`, `difficulty` e o `general.dt` bruto — para a análise ter a porcentagem real.
@@ -37,9 +37,10 @@ Cópias de treino salvas no editor (`Fase SP` / `Fase Start Position`) são **se
 ## Por que dois dados?
 
 Death Tracker continua sendo a fonte macro (mortes agrupadas por percentual).
-MoniDash fornece o micro-contexto de cada morte: modo, mini, espelhamento,
-velocidade, posição, objeto fatal e os eventos precedentes. Os papéis são
-separados: MoniDash não modifica nem duplica os registros do Death Tracker.
+MoniDash fornece o micro-contexto de cada morte: porcentagem, modo, mini,
+espelhamento, velocidade, posição, objeto fatal e os eventos precedentes. Os
+papéis são separados: MoniDash não modifica nem duplica os registros do Death
+Tracker.
 
 ## Local-first privacy
 
@@ -94,7 +95,8 @@ como `rejected`.
 
 O servidor MCP stdio fala JSON-RPC 2.0 e oferece `latest_session`,
 `session_summary`, `death_clusters`, `reference_runs` e `death_context`; não tem
-ferramentas de mutação nem expõe caminhos de arquivos. Execute no VPS com
+ferramentas de mutação nem expõe caminhos de arquivos. O `death_context` inclui
+`death_percent` de cada morte (mesma base do Death Tracker). Execute no VPS com
 `PYTHONPATH=services python -m monidash_hub.mcp_server` e o mesmo ambiente de
 dados do hub.
 
