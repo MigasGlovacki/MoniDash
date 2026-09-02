@@ -1,201 +1,576 @@
 #include <Geode/Geode.hpp>
-#include <Geode/loader/GameEvent.hpp>
-#include <Geode/loader/Loader.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/PlayerObject.hpp>
-#include <cvolton.level-id-api/include/EditorIDs.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <ctime>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <optional>
+#include <sstream>
 
 using namespace geode::prelude;
 
-#include "core/monidash_core.hpp"
+namespace monidash {
 
-#include <chrono>
-#include <cstdint>
-#include <array>
-#include <exception>
-#include <filesystem>
-#include <memory>
-#include <optional>
-#include <string>
-#include <system_error>
-#include <utility>
-#include <vector>
+constexpr char const* kSchemaVersion = "2.0.0";
+constexpr double kContextWindowSeconds = 5.0;
 
-namespace {
-std::unique_ptr<monidash::SessionStore> store;
-std::unique_ptr<monidash::MoniDashCore> core;
-std::optional<std::string> active_level_id;
-std::uint64_t sequence = 0;
-bool exiting_handled = false;
-
-std::int64_t unix_milliseconds() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
+std::string escape(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+    for (unsigned char character : value) {
+        switch (character) {
+            case '\\': escaped += "\\\\"; break;
+            case '"': escaped += "\\\""; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default:
+                if (character < 0x20) {
+                    std::ostringstream hex;
+                    hex << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(character);
+                    escaped += hex.str();
+                } else {
+                    escaped += static_cast<char>(character);
+                }
+        }
+    }
+    return escaped;
 }
 
-void snapshot_death_tracker(const std::filesystem::path& session_path) {
-  try {
-    if (!active_level_id) {
-      log::info("MoniDash omitted Death Tracker snapshot: no active level");
-      return;
-    }
-    const std::string mod_id = "elohmrow.death_tracker";
-    auto* death_tracker = Loader::get()->getLoadedMod(mod_id);
-    if (!death_tracker) {
-      log::info("MoniDash omitted Death Tracker snapshot: mod is not loaded");
-      return;
-    }
-
-    const auto root = death_tracker->getSaveDir() / "levels";
-    const std::array<std::string, 3> keys{*active_level_id, *active_level_id + "-local", *active_level_id + "-gauntlet"};
-    std::vector<std::pair<std::string, std::filesystem::path>> candidates;
-    for (const auto& key : keys) {
-      const auto candidate = root / key;
-      std::error_code error;
-      if (std::filesystem::is_directory(candidate, error)) {
-        candidates.emplace_back(key, candidate);
-      } else if (error == std::errc::no_such_file_or_directory) {
-        continue;
-      } else if (error) {
-        log::error("MoniDash omitted Death Tracker snapshot: cannot inspect {}: {}", candidate.string(), error.message());
-        return;
-      }
-    }
-    const auto directory_count = candidates.size();
-    if (directory_count != 1) {
-      log::info("MoniDash omitted Death Tracker snapshot: expected one candidate directory, found {}", directory_count);
-      return;
-    }
-
-    const auto& [key, source] = candidates.front();
-    const std::array<std::string, 2> names{"metadata", "general.dt"};
-    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> files;
-    for (const auto& name : names) {
-      const auto input = source / name;
-      std::error_code error;
-      if (std::filesystem::is_regular_file(input, error)) {
-        files.emplace_back(input, name);
-      } else if (error) {
-        log::error("MoniDash omitted Death Tracker file {}: {}", input.string(), error.message());
-      } else {
-        log::info("MoniDash omitted missing Death Tracker file {}", input.string());
-      }
-    }
-    if (files.empty()) {
-      return;
-    }
-
-    const auto destination = session_path / "death_tracker_snapshot" / key;
-    std::error_code error;
-    std::filesystem::create_directories(destination, error);
-    if (error) {
-      log::error("MoniDash omitted Death Tracker snapshot: cannot create {}: {}", destination.string(), error.message());
-      return;
-    }
-    for (const auto& [input, name] : files) {
-      error.clear();
-      if (!std::filesystem::copy_file(input, destination / name, std::filesystem::copy_options::none, error)) {
-        log::error("MoniDash omitted Death Tracker file {}: {}", input.string(), error ? error.message() : "copy was not performed");
-      }
-    }
-  } catch (const std::exception& error) {
-    log::error("MoniDash omitted Death Tracker snapshot: {}", error.what());
-  } catch (...) {
-    log::error("MoniDash omitted Death Tracker snapshot: unknown failure");
-  }
-}
+std::string jsonString(std::string_view value) {
+    return "\"" + escape(value) + "\"";
 }
 
-class $modify(PlayLayer) {
-  bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
-    active_level_id.reset();
-    if (!PlayLayer::init(level, useReplay, dontCreateObjects)) {
-      return false;
+std::string unixMillis() {
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    return std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+}
+
+std::string localDate() {
+    std::time_t now = std::time(nullptr);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char buffer[16];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d", &local);
+    return buffer;
+}
+
+bool hasTrainingSuffix(const std::string& name) {
+    auto lower = name;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    // Matches the hub's grouping rule: "<level> SP", "<level> Start Position",
+    // "<level> StartPosition" or "<level> StartPos", case-insensitive.
+    static const std::vector<std::string> suffixes = {
+        " sp", " start position", " startposition", " startpos"
+    };
+    for (const auto& suffix : suffixes) {
+        if (lower.size() >= suffix.size() &&
+            lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            return true;
+        }
     }
-    if (!core) {
-      log::error("MoniDash omitted level-start: core is inactive");
-      return true;
+    return false;
+}
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return {};
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    return buffer.str();
+}
+
+// Minimal, deliberately conservative JSON number extraction ("key":N). Returns
+// -1 when absent; used only for the small Death Tracker metadata files.
+long long jsonNumber(const std::string& text, const std::string& key) {
+    auto pos = text.find("\"" + key + "\"");
+    if (pos == std::string::npos) return -1;
+    pos = text.find(':', pos);
+    if (pos == std::string::npos) return -1;
+    while (pos < text.size() && (std::isspace(text[pos]) || text[pos] == ':')) pos++;
+    if (pos < text.size() && text[pos] == '-') pos++;
+    long long value = 0;
+    bool any = false;
+    while (pos < text.size() && std::isdigit(text[pos])) {
+        value = value * 10 + (text[pos] - '0');
+        pos++;
+        any = true;
     }
-    if (!level) {
-      log::error("MoniDash omitted level-start: level is null");
-      return true;
+    return any ? value : -1;
+}
+
+long long lastNewBest(const std::string& text) {
+    auto pos = text.find("\"newBests\"");
+    if (pos == std::string::npos) return -1;
+    pos = text.find('[', pos);
+    if (pos == std::string::npos) return -1;
+    long long last = -1;
+    while (pos < text.size() && text[pos] != ']') {
+        while (pos < text.size() && text[pos] != ']' && !std::isdigit(text[pos])) pos++;
+        if (pos >= text.size() || text[pos] == ']') break;
+        long long value = 0;
+        while (pos < text.size() && std::isdigit(text[pos])) {
+            value = value * 10 + (text[pos] - '0');
+            pos++;
+        }
+        last = value;
     }
-    try {
-      const auto raw_level_id = level->m_levelType == GJLevelType::Editor
-          ? EditorIDs::getID(level)
-          : level->m_levelID.value();
-      if (raw_level_id <= 0) {
-        log::error("MoniDash omitted level-start: invalid level ID {}", raw_level_id);
+    return last;
+}
+
+// Read-only Death Tracker snapshot: the mod never writes there. Returns the
+// JSON body for a death_tracker_snapshot event, or an empty string when the
+// level has no Death Tracker data (e.g. editor training copies with id 0).
+std::string deathTrackerSnapshot(int levelID, const std::string& levelName) {
+    if (levelID <= 0) return {};
+    auto levelDir = Mod::get()->getSaveDir().parent_path() / "elohmrow.death_tracker" / "levels" / std::to_string(levelID);
+    auto metadata = readFile(levelDir / "metadata");
+    auto general = readFile(levelDir / "general.dt");
+    if (metadata.empty() && general.empty()) return {};
+    auto attempts = jsonNumber(metadata, "attempts");
+    auto difficulty = jsonNumber(metadata, "difficulty");
+    auto realEnd = jsonNumber(metadata, "realEndPercent");
+    auto newBest = lastNewBest(general);
+    auto numberOrNull = [](long long value) {
+        return value >= 0 ? std::to_string(value) : "null";
+    };
+    return ",\"level_id\":" + std::to_string(levelID) +
+        ",\"level_name\":" + jsonString(levelName) +
+        ",\"attempts\":" + numberOrNull(attempts) +
+        ",\"new_best_percent\":" + numberOrNull(newBest) +
+        ",\"real_end_percent\":" + numberOrNull(realEnd) +
+        ",\"difficulty\":" + numberOrNull(difficulty) +
+        ",\"general_dt\":" + jsonString(general);
+}
+
+// Replica o cálculo de porcentagem de morte do Death Tracker v3.0.9
+// (DTPlayLayer::getActualProgress): para níveis com timestamp de música usa
+// tempo decorrido vs timestamp; caso contrário usa a posição do player 1
+// sobre o comprimento do nível. O Death Tracker sempre usa o player 1, e
+// mantemos isso para a porcentagem bater com a fonte macro. Retorna nullopt
+// quando não há base confiável para calcular (sem player ou nível sem comprimento).
+std::optional<double> deathPercent(PlayLayer* layer) {
+    if (!layer || !layer->m_level || !layer->m_player1) return std::nullopt;
+    float percent = 0.f;
+    if (layer->m_level->m_timestamp > 0) {
+        percent = static_cast<float>(layer->m_gameState.m_levelTime * 240.f) /
+            static_cast<float>(layer->m_level->m_timestamp) * 100.f;
+    } else {
+        if (layer->m_levelLength <= 0.f) return std::nullopt;
+        percent = layer->m_player1->getPositionX() / layer->m_levelLength * 100.f;
+    }
+    return std::clamp(static_cast<double>(percent), 0.0, 100.0);
+}
+
+bool levelEligible(GJGameLevel* level) {
+    if (!Mod::get()->getSettingValue<bool>("capture-enabled")) return false;
+    const bool demonsOnly = Mod::get()->getSettingValue<bool>("filter-demons-only");
+    const bool stars9 = Mod::get()->getSettingValue<bool>("filter-stars9");
+    if (!demonsOnly && !stars9) return true;
+    const bool isDemon = level && static_cast<int>(level->m_demon) != 0;
+    const int stars = level ? static_cast<int>(level->m_stars) : 0;
+    if (demonsOnly && isDemon) return true;
+    if (stars9 && stars >= 9) return true;
+    // Editor training copies ("<level> SP" / "<level> Start Position") do not
+    // carry the server demon rating; treat them as eligible so practice runs
+    // are captured even when the filters are on.
+    return level && level->m_localOrSaved && hasTrainingSuffix(level->m_levelName);
+}
+
+std::string playerMode(PlayerObject* player) {
+    if (!player) return "unknown";
+    if (player->m_isShip) return "ship";
+    if (player->m_isBird) return "ufo";
+    if (player->m_isDart) return "wave";
+    if (player->m_isRobot) return "robot";
+    if (player->m_isSpider) return "spider";
+    if (player->m_isBall) return "ball";
+    return "cube";
+}
+
+std::string objectClass(GameObject* object) {
+    if (!object) return "unknown";
+    // This is intentionally conservative: object IDs are retained as the source of truth.
+    switch (object->m_objectID) {
+        case 1: case 8: case 39: case 103: return "block";
+        case 2: case 3: case 4: case 5: case 6: case 7: return "spike";
+        default: return "unknown";
+    }
+}
+
+struct Attempt {
+    int number = 0;
+    std::string id;
+    double startX = 0.0;
+    bool trainingSegment = false;
+    bool finished = false;
+};
+
+class Recorder {
+public:
+    static Recorder& get() {
+        static Recorder instance;
+        return instance;
+    }
+
+    bool active() const { return m_playLayer != nullptr && m_output.is_open(); }
+
+    bool owns(PlayerObject* player) const {
+        return active() && player && (player == m_playLayer->m_player1 || player == m_playLayer->m_player2);
+    }
+
+    void start(PlayLayer* layer, GJGameLevel* level) {
+        if (m_playLayer == layer) return;
+        endSession();
+        if (!Mod::get()->getSettingValue<bool>("capture-enabled")) return;
+        if (!levelEligible(level)) {
+            log::info("MoniDash skipped session: {} does not pass the difficulty filter",
+                level ? level->m_levelName : "unknown");
+            return;
+        }
+
+        m_playLayer = layer;
+        m_startedAt = std::chrono::steady_clock::now();
+        m_sessionId = "session-" + unixMillis();
+        m_attemptCounter = 0;
+        m_context.clear();
+        m_telemetryDir = Mod::get()->getSaveDir() / "telemetry";
+        std::filesystem::create_directories(m_telemetryDir);
+        m_output.open(m_telemetryDir / (m_sessionId + ".jsonl"), std::ios::out | std::ios::app);
+        if (!m_output.is_open()) {
+            log::error("Could not open MoniDash telemetry output");
+            m_playLayer = nullptr;
+            return;
+        }
+
+        auto length = level ? level->m_levelLength : -1;
+        auto* settings = layer->m_levelSettings;
+        const bool mirrorMode = settings && settings->m_mirrorMode;
+        const bool isDemon = level && static_cast<int>(level->m_demon) != 0;
+        const int stars = level ? static_cast<int>(level->m_stars) : 0;
+        write("session_started", "\"session_id\":" + jsonString(m_sessionId) +
+            ",\"local_date\":" + jsonString(localDate()) +
+            ",\"level\":{\"id\":" + std::to_string(level ? static_cast<int>(level->m_levelID) : 0) +
+            ",\"name\":" + jsonString(level ? level->m_levelName : "") +
+            ",\"creator\":" + jsonString(level ? level->m_creatorName : "") +
+            ",\"length_category\":" + std::to_string(length) +
+            ",\"extent_x\":" + number(layer->m_endXPosition) +
+            ",\"stars\":" + std::to_string(stars) +
+            ",\"is_demon\":" + std::string(isDemon ? "true" : "false") +
+            ",\"local_or_saved\":" + std::string(level && level->m_localOrSaved ? "true" : "false") +
+            ",\"platformer\":" + std::string(level && level->isPlatformer() ? "true" : "false") +
+            ",\"mirror_mode\":" + std::string(mirrorMode ? "true" : "false") + "}");
+    }
+
+    void beginAttempt() {
+        if (!active()) return;
+        finishAttempt("reset", nullptr);
+        ++m_attemptCounter;
+        m_attempt = {};
+        m_lastFatalPlayer = nullptr;
+        m_lastFatalObject = nullptr;
+        m_attempt.number = m_attemptCounter;
+        m_attempt.id = m_sessionId + "-attempt-" + std::to_string(m_attemptCounter);
+        auto* startPos = m_playLayer->m_startPosObject;
+        m_attempt.trainingSegment = startPos != nullptr;
+        m_attempt.startX = startPos ? startPos->getPositionX() : 0.0;
+        write("attempt_started", "\"attempt_id\":" + jsonString(m_attempt.id) +
+            ",\"attempt_number\":" + std::to_string(m_attempt.number) +
+            ",\"training_segment\":" + std::string(m_attempt.trainingSegment ? "true" : "false") +
+            ",\"start_x\":" + number(m_attempt.startX));
+        if (m_attempt.trainingSegment) {
+            auto levelID = m_playLayer->m_level ? static_cast<int>(m_playLayer->m_level->m_levelID) : 0;
+            write("copy_level_link", "\"attempt_id\":" + jsonString(m_attempt.id) +
+                ",\"copy_level_id\":" + std::to_string(levelID) +
+                ",\"official_level_id\":null,\"link_status\":\"needs_confirmation\",\"start_x\":" + number(m_attempt.startX));
+        }
+    }
+
+    void input(int button, bool player2, bool pressed) {
+        if (!active() || m_attempt.id.empty() || m_attempt.finished) return;
+        event("input", "\"button\":" + std::to_string(button) +
+            ",\"player\":" + std::to_string(player2 ? 2 : 1) +
+            ",\"pressed\":" + std::string(pressed ? "true" : "false"));
+    }
+
+    void interaction(PlayerObject* player, GameObject* object) {
+        if (!owns(player) || m_attempt.id.empty() || m_attempt.finished) return;
+        event("interaction", "\"player\":" + std::to_string(player == m_playLayer->m_player2 ? 2 : 1) +
+            ",\"object\":" + objectJson(object));
+    }
+
+    void sample() {
+        if (!active() || m_attempt.id.empty() || m_attempt.finished || !m_playLayer->m_player1) return;
+        auto* p1 = m_playLayer->m_player1;
+        auto signature = playerMode(p1) + ":" + (p1->m_isUpsideDown ? "up" : "down") + ":" +
+            std::to_string(static_cast<int>(p1->m_yVelocity)) + ":" + std::to_string(p1->m_playerSpeed);
+        if (signature != m_lastState) {
+            m_lastState = signature;
+            event("player_state", "\"player_state\":" + playerJson(p1, 1));
+        }
+    }
+
+    void death(PlayerObject* player) {
+        if (!owns(player) || m_attempt.id.empty() || m_attempt.finished) return;
+        auto* object = (m_lastFatalPlayer == player) ? m_lastFatalObject : nullptr;
+        std::string klass = objectClass(object);
+        std::string confidence = object ? (klass == "unknown" ? "low" : "medium") : "none";
+        if (klass == "unknown" && object) {
+            // GameObjectType follows the GD 2.2 convention (2=Hazard, 3=Solid,
+            // 5=Slope). The raw object_type stays in the payload for later
+            // validation, so these classifications are low-confidence facts.
+            switch (static_cast<int>(object->m_objectType)) {
+                case 2: klass = "hazard"; confidence = "low"; break;
+                case 3: klass = "block"; confidence = "low"; break;
+                case 5: klass = "slope"; confidence = "low"; break;
+            }
+        }
+        std::ostringstream context;
+        context << "[";
+        bool first = true;
+        auto now = elapsed();
+        for (auto const& item : m_context) {
+            if (now - item.time > kContextWindowSeconds) continue;
+            if (!first) context << ",";
+            context << item.json;
+            first = false;
+        }
+        context << "]";
+        auto percent = deathPercent(m_playLayer);
+        write("death_context", "\"attempt_id\":" + jsonString(m_attempt.id) +
+            ",\"death_percent\":" + (percent ? number(*percent) : "null") +
+            ",\"player_snapshot\":" + playerJson(player, player == m_playLayer->m_player2 ? 2 : 1) +
+            ",\"fatal_object\":" + objectJson(object) +
+            ",\"cause\":{\"classification\":" + jsonString(klass) +
+            ",\"confidence\":" + jsonString(confidence) + "}" +
+            ",\"context_seconds\":5,\"preceding_events\":" + context.str());
+        finishAttempt("death", player);
+    }
+
+    // O GD 2.2081 chama PlayLayer::destroyPlayer repetidamente durante o ciclo
+    // de spawn/respawn (com o chão como objeto), então destroyPlayer não é um
+    // gatilho confiável de morte. Aqui ele apenas registra o candidato a objeto
+    // fatal; a morte real é sinalizada uma única vez por PlayerObject::playerDestroyed.
+    void noteDestroyPlayer(PlayerObject* player, GameObject* object) {
+        if (!owns(player)) return;
+        m_lastFatalPlayer = player;
+        m_lastFatalObject = object;
+    }
+
+    void complete() {
+        if (!active() || m_attempt.id.empty()) return;
+        auto endX = m_playLayer->m_player1 ? m_playLayer->m_player1->getPositionX() : 0.0;
+        if (m_attempt.trainingSegment) {
+            auto referenceId = m_sessionId + "-reference-" + std::to_string(m_attempt.number);
+            auto active = activateReference(referenceId, endX);
+            write("reference_run_saved", "\"reference_id\":" + jsonString(referenceId) +
+                ",\"attempt_id\":" + jsonString(m_attempt.id) +
+                ",\"link_status\":\"needs_confirmation\",\"segment\":{\"start_x\":" + number(m_attempt.startX) +
+                ",\"end_x\":" + number(endX) + "},\"active_key\":" + jsonString(segmentKey()) +
+                ",\"active\":" + std::string(active ? "true" : "false"));
+        }
+        finishAttempt("completed", m_playLayer->m_player1);
+    }
+
+    void endSession() {
+        if (!m_output.is_open()) {
+            m_playLayer = nullptr;
+            return;
+        }
+        finishAttempt("abandoned", nullptr);
+        if (m_playLayer && m_playLayer->m_level) {
+            auto levelID = static_cast<int>(m_playLayer->m_level->m_levelID);
+            auto snapshot = deathTrackerSnapshot(levelID, std::string(m_playLayer->m_level->m_levelName));
+            if (!snapshot.empty()) {
+                write("death_tracker_snapshot", "\"session_id\":" + jsonString(m_sessionId) + snapshot);
+            }
+        }
+        write("session_ended", "\"session_id\":" + jsonString(m_sessionId));
+        m_output.flush();
+        m_output.close();
+        m_playLayer = nullptr;
+        m_attempt = {};
+        m_context.clear();
+    }
+
+private:
+    struct ContextEvent { double time; std::string json; };
+    PlayLayer* m_playLayer = nullptr;
+    std::ofstream m_output;
+    std::deque<ContextEvent> m_context;
+    Attempt m_attempt;
+    PlayerObject* m_lastFatalPlayer = nullptr;
+    GameObject* m_lastFatalObject = nullptr;
+    std::string m_sessionId;
+    std::string m_lastState;
+    std::filesystem::path m_telemetryDir;
+    int m_attemptCounter = 0;
+    std::chrono::steady_clock::time_point m_startedAt = std::chrono::steady_clock::now();
+
+    double elapsed() const {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - m_startedAt).count();
+    }
+    static std::string number(double value) {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(3) << value;
+        return stream.str();
+    }
+    std::string playerJson(PlayerObject* player, int playerNumber) const {
+        // Os bindings Geode 5.8.2 / GD 2.2081 não expõem m_isMini nem m_isMirror
+        // no PlayerObject (verificado no build Windows); a escala (mini ≈ 0.6 vs
+        // 1.0) e a direção observável (is_going_left, correlata de espelhamento)
+        // são os fatos disponíveis. A classificação mini/espelhado fica para a
+        // análise, separada dos dados observados.
+        return "{\"player\":" + std::to_string(playerNumber) +
+            ",\"x\":" + number(player->getPositionX()) + ",\"y\":" + number(player->getPositionY()) +
+            ",\"y_velocity\":" + number(player->m_yVelocity) +
+            ",\"speed\":" + number(player->m_playerSpeed) +
+            ",\"mode\":" + jsonString(playerMode(player)) +
+            ",\"gravity\":" + jsonString(player->m_isUpsideDown ? "up" : "down") +
+            ",\"on_ground\":" + std::string(player->m_isOnGround ? "true" : "false") +
+            ",\"scale\":" + number(player->getScale()) +
+            ",\"is_going_left\":" + std::string(player->m_isGoingLeft ? "true" : "false") + "}";
+    }
+    static std::string objectJson(GameObject* object) {
+        if (!object) return "null";
+        return "{\"object_id\":" + std::to_string(object->m_objectID) +
+            ",\"unique_id\":" + std::to_string(object->m_uniqueID) +
+            ",\"object_type\":" + std::to_string(static_cast<int>(object->m_objectType)) +
+            ",\"x\":" + number(object->getPositionX()) + ",\"y\":" + number(object->getPositionY()) + "}";
+    }
+    void write(std::string_view type, std::string body) {
+        if (!m_output.is_open()) return;
+        m_output << "{\"schema_version\":" << jsonString(kSchemaVersion)
+                 << ",\"event_type\":" << jsonString(type)
+                 << ",\"timestamp_ms\":" << jsonString(unixMillis())
+                 << ",\"monotonic_seconds\":" << number(elapsed()) << "," << body << "}\n";
+        m_output.flush();
+    }
+    void event(std::string_view type, std::string body) {
+        std::string line = "{\"event_type\":" + jsonString(type) + ",\"at\":" + number(elapsed()) + "," + body + "}";
+        m_context.push_back({ elapsed(), line });
+        while (!m_context.empty() && elapsed() - m_context.front().time > kContextWindowSeconds) m_context.pop_front();
+        write("gameplay_event", "\"attempt_id\":" + jsonString(m_attempt.id) + ",\"event\":" + line);
+    }
+    void finishAttempt(std::string_view outcome, PlayerObject* player) {
+        if (!active() || m_attempt.id.empty() || m_attempt.finished) return;
+        m_attempt.finished = true;
+        auto endX = player ? player->getPositionX() : 0.0;
+        write("attempt_ended", "\"attempt_id\":" + jsonString(m_attempt.id) +
+            ",\"outcome\":" + jsonString(outcome) + ",\"start_x\":" + number(m_attempt.startX) +
+            ",\"end_x\":" + number(endX) + ",\"training_segment\":" + std::string(m_attempt.trainingSegment ? "true" : "false"));
+    }
+    std::string segmentKey() const {
+        auto levelID = m_playLayer && m_playLayer->m_level ? static_cast<int>(m_playLayer->m_level->m_levelID) : 0;
+        return "level:" + std::to_string(levelID);
+    }
+    static std::optional<double> referenceStartX(std::filesystem::path const& path) {
+        std::ifstream index(path);
+        std::string json((std::istreambuf_iterator<char>(index)), std::istreambuf_iterator<char>());
+        auto field = json.find("\"start_x\":");
+        if (!index || field == std::string::npos) return std::nullopt;
+        try {
+            return std::stod(json.substr(field + 10));
+        } catch (std::exception const&) {
+            return std::nullopt;
+        }
+    }
+    bool activateReference(std::string const& referenceId, double endX) const {
+        auto referencesDir = m_telemetryDir / "active-references";
+        std::filesystem::create_directories(referencesDir);
+        auto levelID = m_playLayer && m_playLayer->m_level ? static_cast<int>(m_playLayer->m_level->m_levelID) : 0;
+        auto filename = "level-" + std::to_string(levelID) + ".json";
+        auto finalPath = referencesDir / filename;
+        if (std::filesystem::exists(finalPath)) {
+            auto previousStartX = referenceStartX(finalPath);
+            if (!previousStartX) {
+                log::warn("Could not read active reference index: {}", finalPath.string());
+                return false;
+            }
+            if (m_attempt.startX <= *previousStartX) return false;
+        }
+        auto tempPath = finalPath;
+        tempPath += ".tmp";
+        std::ofstream index(tempPath, std::ios::out | std::ios::trunc);
+        if (!index.is_open()) {
+            log::warn("Could not update active reference index");
+            return false;
+        }
+        index << "{\"schema_version\":" << jsonString(kSchemaVersion)
+              << ",\"reference_id\":" << jsonString(referenceId)
+              << ",\"session_id\":" << jsonString(m_sessionId)
+              << ",\"attempt_id\":" << jsonString(m_attempt.id)
+              << ",\"active_key\":" << jsonString(segmentKey())
+              << ",\"start_x\":" << number(m_attempt.startX)
+              << ",\"end_x\":" << number(endX) << "}";
+        index.close();
+        std::error_code error;
+        std::filesystem::rename(tempPath, finalPath, error);
+        if (error) {
+            std::filesystem::remove(finalPath, error);
+            std::filesystem::rename(tempPath, finalPath, error);
+        }
+        if (error) log::warn("Could not activate reference index: {}", error.message());
+        return !error;
+    }
+};
+} // namespace monidash
+
+class $modify(MoniDashPlayLayer, PlayLayer) {
+    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
+        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+        monidash::Recorder::get().start(this, level);
+        monidash::Recorder::get().beginAttempt();
         return true;
-      }
-      auto level_id = std::to_string(raw_level_id);
-      if (level->m_levelType == GJLevelType::Editor) {
-        level_id += "-editor";
-      }
-      core->record_level_started(level_id);
-      active_level_id = level_id;
-      log::info("MoniDash recorded level-start {}", level_id);
-    } catch (const std::exception& error) {
-      log::error("MoniDash omitted level-start: {}", error.what());
-    } catch (...) {
-      log::error("MoniDash omitted level-start: level ID conversion failed");
     }
-    return true;
-  }
-
+    void onExit() {
+        monidash::Recorder::get().endSession();
+        PlayLayer::onExit();
+    }
+    void resetLevel() {
+        PlayLayer::resetLevel();
+        monidash::Recorder::get().beginAttempt();
+    }
+    void postUpdate(float dt) {
+        PlayLayer::postUpdate(dt);
+        monidash::Recorder::get().sample();
+    }
+    void destroyPlayer(PlayerObject* player, GameObject* object) {
+        monidash::Recorder::get().noteDestroyPlayer(player, object);
+        PlayLayer::destroyPlayer(player, object);
+    }
+    void levelComplete() {
+        monidash::Recorder::get().complete();
+        PlayLayer::levelComplete();
+    }
 };
 
-class $modify(PlayerObject) {
-  void playerDestroyed(bool noEffects) {
-    PlayerObject::playerDestroyed(noEffects);
-    if (!core || !active_level_id) {
-      return;
+class $modify(MoniDashPlayerObject, PlayerObject) {
+    void playerDestroyed(bool noEffects) {
+        monidash::Recorder::get().death(this);
+        PlayerObject::playerDestroyed(noEffects);
     }
-    try {
-      core->record_death(monidash::Death{*active_level_id});
-    } catch (const std::exception& error) {
-      log::error("MoniDash omitted death: {}", error.what());
-    } catch (...) {
-      log::error("MoniDash omitted death: recording failed");
-    }
-  }
 };
 
-$on_mod(Loaded) {
-  try {
-    const auto root = Mod::get()->getSaveDir() / "telemetry" / "sessions";
-    const auto recovered = monidash::SessionStore::recover(root);
-    log::info("MoniDash recovered {} abandoned session(s)", recovered);
-
-    store = std::make_unique<monidash::SessionStore>(root);
-    core = std::make_unique<monidash::MoniDashCore>(
-        *store, unix_milliseconds, [] {
-          return "monidash-" + std::to_string(unix_milliseconds()) + "-" + std::to_string(++sequence);
-        });
-    core->start();
-    log::info("MoniDash started local session {} at {}", core->session_id(), core->session_path().string());
-  } catch (const std::exception& error) {
-    core.reset();
-    store.reset();
-    log::error("MoniDash telemetry bootstrap failed; mod is inert: {}", error.what());
-  }
-}
-
-$on_game(Exiting) {
-  if (exiting_handled) {
-    return;
-  }
-  exiting_handled = true;
-  if (core) {
-    snapshot_death_tracker(core->session_path());
-    try {
-      core->shutdown();
-    } catch (const std::exception& error) {
-      log::error("MoniDash session finalization failed: {}", error.what());
-    } catch (...) {
-      log::error("MoniDash session finalization failed: unknown failure");
+class $modify(MoniDashBaseGameLayer, GJBaseGameLayer) {
+    void handleButton(bool down, int button, bool isPlayer1) {
+        monidash::Recorder::get().input(button, !isPlayer1, down);
+        GJBaseGameLayer::handleButton(down, button, isPlayer1);
     }
-  }
-  core.reset();
-  store.reset();
-}
+    void bumpPlayer(PlayerObject* player, EffectGameObject* object) {
+        monidash::Recorder::get().interaction(player, object);
+        GJBaseGameLayer::bumpPlayer(player, object);
+    }
+};

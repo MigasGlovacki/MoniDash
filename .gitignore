@@ -9,12 +9,25 @@ death-tracker/
 *.telemetry.log
 *.session.log
 
-# Secrets and local environment files
+# MoniDash hub/relay secrets and local runtime state
 .env
 .env.*
 !.env.example
 *.pem
 *.key
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+monidash-data/
+services/monidash-data/
+relay-state.json
+relay/relay-state.json
+relay/relay-state.json.tmp
+
+# Local Hermes plans
+.hermes/
 
 # CMake and Geode build artifacts
 build/
@@ -36,12 +49,8 @@ _deps/
 *.swp
 *.swo
 
-# Python caches and test artifacts
-__pycache__/
+# Compiled Python artifacts
 *.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 
 # Operating-system junk
 .DS_Store
